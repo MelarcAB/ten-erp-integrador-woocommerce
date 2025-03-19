@@ -32,6 +32,16 @@ class LoginRequest extends FormRequest
         ];
     }
 
+    //mensaje de error personalizado
+    public function messages()
+    {
+        return [
+            'email.required' => 'El campo email es requerido',
+            'email.email' => 'El campo email debe ser un correo electrónico',
+            'password.required' => 'El campo contraseña es requerido',
+        ];
+    }
+
     /**
      * Attempt to authenticate the request's credentials.
      *
