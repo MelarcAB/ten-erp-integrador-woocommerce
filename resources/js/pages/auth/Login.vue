@@ -80,13 +80,13 @@ const submit = () => {
 
                 <Button type="submit" class="mt-4 w-full" :tabindex="4" :disabled="form.processing">
                     <LoaderCircle v-if="form.processing" class="h-4 w-4 animate-spin" />
-                    Iniciar sesión
+                    {{ $t('auth.login') }}
                 </Button>
             </div>
 
             <div class="text-center text-sm text-muted-foreground">
                 ¿No tienes una cuenta?
-                <TextLink :href="route('register')" :tabindex="5">Regístrate</TextLink>
+                <TextLink :href="route('register')" :tabindex="5">Sign up</TextLink>
             </div>
         </form>
     </AuthBase>
