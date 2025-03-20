@@ -1,5 +1,21 @@
 {
-    "welcome": "Bienvenido",
-    "logout": "Cerrar sesión"
-  }
-  
+    "common": {
+        "menu": "Menú",
+        "home": "Inicio",
+        "about": "Acerca de",
+        "contact": "Contacto",
+        "profile": "Perfil",
+        "settings": "Ajustes",
+        "logout": "Cerrar sesión",
+        "save": "Guardar",
+        "cancel": "Cancelar",
+        "delete": "Eliminar",
+        "edit": "Editar",
+        "create": "Crear",
+        "back": "Volver",
+        "search": "Buscar",
+        "no_results": "No se encontraron resultados",
+        "loading": "Cargando...",
+        "confirm": "Confirmar"
+    }
+}

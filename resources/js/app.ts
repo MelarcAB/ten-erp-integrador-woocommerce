@@ -42,8 +42,8 @@ console.log(modules);
 
 const i18n = createI18n({
   legacy: false,       // Usar Composition API
-  locale: 'es',        // Idioma por defecto
-  fallbackLocale: 'es',// Idioma de respaldo
+  locale: 'en',        // Idioma por defecto
+  fallbackLocale: 'en',// Idioma de respaldo
   messages,
 });
 

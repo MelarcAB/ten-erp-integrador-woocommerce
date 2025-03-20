@@ -1,0 +1,18 @@
+{
+    "settings": {
+      "profile": "Profile",
+      "settings": "Settings",
+      "settings_description": "Manage your account and application settings.",
+      "profile_description": "Manage your profile and application settings.",
+      "delete_account": "Delete Account",
+      "delete_account_description": "Permanently delete your account.",
+      "delete_account_confirmation": "Are you sure you want to delete your account? This action cannot be undone.",
+      "delete_account_success": "Your account has been deleted.",
+      "important": "Important",
+      "delete_account_warning": "Deleting your account will result in the loss of all your data, and you will not be able to recover it.",
+      "cancel": "Cancel",
+      "delete": "Delete",
+      "language": "Language"
+    }
+  }
+  

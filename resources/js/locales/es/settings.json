@@ -1,0 +1,18 @@
+{
+    "settings": {
+        "profile": "Perfil",
+        "settings": "Configuración",
+        "settings_description": "Administra tu cuenta y configuración de la aplicación.",
+        "profile_description": "Administra tu perfil y configuración de la aplicación.",
+        "delete_account": "Eliminar cuenta",
+        "delete_account_description": "Eliminar tu cuenta de forma permanente.",
+        "delete_account_confirmation": "¿Estás seguro de que deseas eliminar tu cuenta? Esta acción no se puede deshacer.",
+        "delete_account_success": "Tu cuenta ha sido eliminada.",
+        "important": "Importante",
+        "delete_account_warning": "Al eliminar tu cuenta, perderás todos tus datos y no podrás recuperarlos.",
+        "cancel": "Cancelar",
+        "delete": "Eliminar",   
+        "language": "Idioma"
+    }
+  }
+  

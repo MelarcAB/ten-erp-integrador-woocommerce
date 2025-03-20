@@ -23,14 +23,14 @@ const submit = () => {
 </script>
 
 <template>
-    <AuthBase title="Crea una cuenta nueva" description="Escribe tu nombre, email y contraseña para registrarte.">
-        <Head title="Register" />
+    <AuthBase :title="$t('auth.register')" :description="$t('auth.register_description')">
+        <Head  :title="$t('auth.register')"/>
 
         <form @submit.prevent="submit" class="flex flex-col gap-6">
             <div class="grid gap-6">
                 <div class="grid gap-2">
-                    <Label for="name">Nombre</Label>
-                    <Input id="name" type="text" required autofocus :tabindex="1" autocomplete="name" v-model="form.name" placeholder="Nombre" />
+                    <Label for="name">{{ $t('auth.name') }}</Label>
+                    <Input id="name" type="text" required autofocus :tabindex="1" autocomplete="name" v-model="form.name" :placeholder="$t('auth.name')" />
                     <InputError :message="form.errors.name" />
                 </div>
 
@@ -41,7 +41,7 @@ const submit = () => {
                 </div>
 
                 <div class="grid gap-2">
-                    <Label for="password">Contraseña</Label>
+                    <Label for="password">{{$t('auth.password')}}</Label>
                     <Input
                         id="password"
                         type="password"
@@ -49,13 +49,13 @@ const submit = () => {
                         :tabindex="3"
                         autocomplete="new-password"
                         v-model="form.password"
-                        placeholder="Contraseña"
+                        :placeholder=" $t('auth.password') "
                     />
                     <InputError :message="form.errors.password" />
                 </div>
 
                 <div class="grid gap-2">
-                    <Label for="password_confirmation">Confirmar la contraseña</Label>
+                    <Label for="password_confirmation">{{ $t('auth.password_confirmation') }}</Label>
                     <Input
                         id="password_confirmation"
                         type="password"
@@ -63,20 +63,22 @@ const submit = () => {
                         :tabindex="4"
                         autocomplete="new-password"
                         v-model="form.password_confirmation"
-                        placeholder="Confirmar contraseña"
+                        :placeholder=" $t('auth.password_repeat') "
                     />
                     <InputError :message="form.errors.password_confirmation" />
                 </div>
 
                 <Button type="submit" class="mt-2 w-full" tabindex="5" :disabled="form.processing">
                     <LoaderCircle v-if="form.processing" class="h-4 w-4 animate-spin" />
-                    Registrarse
+                    {{ $t('auth.register') }}
                 </Button>
             </div>
 
             <div class="text-center text-sm text-muted-foreground">
-                ¿Ya tienes una cuenta?
-                <TextLink :href="route('login')" class="underline underline-offset-4" :tabindex="6">Iniciar sesión</TextLink>
+                {{ $t('auth.already_account') }}
+                <TextLink :href="route('login')" class="underline underline-offset-4" :tabindex="6">
+                    {{ $t('auth.login') }}                    
+                </TextLink>
             </div>
         </form>
     </AuthBase>

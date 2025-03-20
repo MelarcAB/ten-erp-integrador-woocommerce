@@ -28,8 +28,9 @@ const submit = () => {
 </script>
 
 <template>
-    <AuthBase title="Inicia sesión" description="Escribe tu email y contraseña para acceder.">
-        <Head title="Inicio de sesión" />
+    <AuthBase :title="$t('auth.login')" :description="$t('auth.login_description')">
+
+        <Head :title="$t('auth.login')" />
 
         <div v-if="status" class="mb-4 text-center text-sm font-medium text-green-600">
             {{ status }}
@@ -38,43 +39,29 @@ const submit = () => {
         <form @submit.prevent="submit" class="flex flex-col gap-6">
             <div class="grid gap-6">
                 <div class="grid gap-2">
-                    <Label for="email">Email</Label>
-                    <Input
-                        id="email"
-                        type="email"
-                        required
-                        autofocus
-                        :tabindex="1"
-                        autocomplete="email"
-                        v-model="form.email"
-                        placeholder="email@ejemplo.com"
-                    />
+                    <Label for="email">{{ $t('auth.email') }}</Label>
+                    <Input id="email" type="email" required autofocus :tabindex="1" autocomplete="email"
+                        v-model="form.email" placeholder="email@ejemplo.com" />
                     <InputError :message="form.errors.email" />
                 </div>
 
                 <div class="grid gap-2">
                     <div class="flex items-center justify-between">
-                        <Label for="password">Contraseña</Label>
-                        <TextLink v-if="canResetPassword" :href="route('password.request')" class="text-sm" :tabindex="5">
-                            ¿Olvidaste tu contraseña?
+                        <Label for="password">{{ $t('auth.password') }}</Label>
+                        <TextLink v-if="canResetPassword" :href="route('password.request')" class="text-sm"
+                            :tabindex="5">
+                            {{ $t('auth.forgot_password') }}
                         </TextLink>
                     </div>
-                    <Input
-                        id="password"
-                        type="password"
-                        required
-                        :tabindex="2"
-                        autocomplete="current-password"
-                        v-model="form.password"
-                        placeholder="Contraseña"
-                    />
+                    <Input id="password" type="password" required :tabindex="2" autocomplete="current-password"
+                        v-model="form.password" :placeholder="$t('auth.password')" />
                     <InputError :message="form.errors.password" />
                 </div>
 
                 <div class="flex items-center justify-between" :tabindex="3">
                     <Label for="remember" class="flex items-center space-x-3">
                         <Checkbox id="remember" v-model:checked="form.remember" :tabindex="4" />
-                        <span>Recuérdame</span>
+                        <span>{{ $t('auth.remember_me') }}</span>
                     </Label>
                 </div>
 
@@ -85,8 +72,8 @@ const submit = () => {
             </div>
 
             <div class="text-center text-sm text-muted-foreground">
-                ¿No tienes una cuenta?
-                <TextLink :href="route('register')" :tabindex="5">Sign up</TextLink>
+                {{ $t('auth.no_account') }}
+                <TextLink :href="route('register')" :tabindex="5">{{ $t('auth.register') }}</TextLink>
             </div>
         </form>
     </AuthBase>

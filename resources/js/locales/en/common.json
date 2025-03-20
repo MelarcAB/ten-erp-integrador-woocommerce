@@ -1,4 +1,11 @@
 {
-  "welcome": "Welcome",
-  "logout": "Logout"
+    "common": {
+        "navigation": "Menu",
+        "home": "Home",
+        "about": "About",
+        "contact": "Contact",
+        "profile": "Profile",
+        "settings": "Settings",
+        "logout": "Logout"
+    }
 }

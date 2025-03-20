@@ -42,15 +42,16 @@ const submit = () => {
 
 <template>
     <AppLayout :breadcrumbs="breadcrumbs">
-        <Head title="Ajustes de perfil" />
+        <Head :title="$t('settings.profile')" />
 
         <SettingsLayout>
             <div class="flex flex-col space-y-6">
-                <HeadingSmall title="Información del perfil" description="Actualiza tu información personal" />
+                <HeadingSmall :title="$t('settings.profile')"
+                :description="$t('settings.profile_description')" />
 
                 <form @submit.prevent="submit" class="space-y-6">
                     <div class="grid gap-2">
-                        <Label for="name">Nombre</Label>
+                        <Label for="name">{{ $t('auth.name') }}</Label>
                         <Input id="name" class="mt-1 block w-full" v-model="form.name" required autocomplete="name" placeholder="Nombre completo" />
                         <InputError class="mt-2" :message="form.errors.name" />
                     </div>
@@ -71,14 +72,14 @@ const submit = () => {
 
                     <div v-if="mustVerifyEmail && !user.email_verified_at">
                         <p class="-mt-4 text-sm text-muted-foreground">
-                            Tu dirección de correo electrónico no ha sido verificada.
+                            {{$t('auth.email_not_verified')}}.
                             <Link
                                 :href="route('verification.send')"
                                 method="post"
                                 as="button"
                                 class="text-foreground underline decoration-neutral-300 underline-offset-4 transition-colors duration-300 ease-out hover:!decoration-current dark:decoration-neutral-500"
                             >
-                                Reenviar correo de verificación
+                                {{ $t('auth.resend_verification') }}
                             </Link>
                         </p>
 
