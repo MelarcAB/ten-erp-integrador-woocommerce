@@ -16,6 +16,7 @@
         "search": "Buscar",
         "no_results": "No se encontraron resultados",
         "loading": "Cargando...",
-        "confirm": "Confirmar"
+        "confirm": "Confirmar",
+        "navigation": "Navegación"
     }
 }

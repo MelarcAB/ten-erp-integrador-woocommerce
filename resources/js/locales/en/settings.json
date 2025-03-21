@@ -35,6 +35,11 @@
         "appearance_settings": "Appearance Settings",
         "language_settings": "Language Settings",
         "appearance_description": "Customize the appearance of the application.",
-        "language_description": "Change the language of the application."
+        "language_description": "Change the language of the application.",
+        "english": "English",
+        "spanish": "Spanish",
+        "portuguese": "Portuguese",
+        "french": "French",
+        "select_lang": "Select Language"
     }
 }
