@@ -11,9 +11,13 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { type BreadcrumbItem } from '@/types';
 
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
+
 const breadcrumbItems: BreadcrumbItem[] = [
     {
-        title: 'Ajustes de contraseña',
+        title: t('settings.password_settings'),
         href: '/settings/password',
     },
 ];
@@ -52,15 +56,15 @@ const updatePassword = () => {
 
 <template>
     <AppLayout :breadcrumbs="breadcrumbItems">
-        <Head title="Password settings" />
-
+        <Head :title="$t('settings.password_settings')" />
         <SettingsLayout>
             <div class="space-y-6">
-                <HeadingSmall title="Cambiar contraseña" description="Asegúrate de que tu cuenta esté segura" />
+                <HeadingSmall :title="$t('settings.password_settings')" 
+                :description="$t('settings.password_description')" />
 
                 <form @submit.prevent="updatePassword" class="space-y-6">
                     <div class="grid gap-2">
-                        <Label for="current_password">Contraseña actual</Label>
+                        <Label for="current_password">{{ $t('settings.current_password') }}</Label>
                         <Input
                             id="current_password"
                             ref="currentPasswordInput"
@@ -68,13 +72,13 @@ const updatePassword = () => {
                             type="password"
                             class="mt-1 block w-full"
                             autocomplete="current-password"
-                            placeholder="Contraseña actual"
+                            :placeholder="$t('settings.current_password')"
                         />
                         <InputError :message="form.errors.current_password" />
                     </div>
 
                     <div class="grid gap-2">
-                        <Label for="password">Nueva contraseña</Label>
+                        <Label for="password">{{ $t('settings.new_password') }}</Label>
                         <Input
                             id="password"
                             ref="passwordInput"
@@ -82,26 +86,26 @@ const updatePassword = () => {
                             type="password"
                             class="mt-1 block w-full"
                             autocomplete="new-password"
-                            placeholder="Nueva contraseña"
+                            :placeholder="$t('settings.new_password')"
                         />
                         <InputError :message="form.errors.password" />
                     </div>
 
                     <div class="grid gap-2">
-                        <Label for="password_confirmation">Confirmar contraseña</Label>
+                        <Label for="password_confirmation">{{ $t('settings.confirm_password') }}</Label>
                         <Input
                             id="password_confirmation"
                             v-model="form.password_confirmation"
                             type="password"
                             class="mt-1 block w-full"
                             autocomplete="new-password"
-                            placeholder="Confirmar contraseña"
-                        />
+                            :placeholder="$t('settings.confirm_password')"
+                            />
                         <InputError :message="form.errors.password_confirmation" />
                     </div>
 
                     <div class="flex items-center gap-4">
-                        <Button :disabled="form.processing">Guardar</Button>
+                        <Button :disabled="form.processing"> {{ $t('settings.save') }} </Button>
 
                         <Transition
                             enter-active-class="transition ease-in-out"
@@ -109,7 +113,7 @@ const updatePassword = () => {
                             leave-active-class="transition ease-in-out"
                             leave-to-class="opacity-0"
                         >
-                            <p v-show="form.recentlySuccessful" class="text-sm text-neutral-600">Saved.</p>
+                            <p v-show="form.recentlySuccessful" class="text-sm text-neutral-600">{{ $t('settings.saved') }}</p>
                         </Transition>
                     </div>
                 </form>

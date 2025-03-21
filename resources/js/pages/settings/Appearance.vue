@@ -7,10 +7,12 @@ import { type BreadcrumbItem } from '@/types';
 
 import AppLayout from '@/layouts/AppLayout.vue';
 import SettingsLayout from '@/layouts/settings/Layout.vue';
+import { useI18n } from 'vue-i18n';
 
+const { t } = useI18n();
 const breadcrumbItems: BreadcrumbItem[] = [
     {
-        title: 'Ajustes de apariencia',
+        title:  t('settings.appearance'),
         href: '/settings/appearance',
     },
 ];
@@ -18,11 +20,12 @@ const breadcrumbItems: BreadcrumbItem[] = [
 
 <template>
     <AppLayout :breadcrumbs="breadcrumbItems">
-        <Head title="Ajutes de apariencia" />
+        <Head :title="$t('settings.appearance')" />
 
         <SettingsLayout>
             <div class="space-y-6">
-                <HeadingSmall title="Ajutes de apariencia" description="Configura la apariencia de la aplicación" />
+                <HeadingSmall :title="$t('settings.appearance')" 
+                :description="$t('settings.appearance_description')" />
                 <AppearanceTabs />
             </div>
         </SettingsLayout>

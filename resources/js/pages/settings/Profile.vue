@@ -10,6 +10,9 @@ import { Label } from '@/components/ui/label';
 import AppLayout from '@/layouts/AppLayout.vue';
 import SettingsLayout from '@/layouts/settings/Layout.vue';
 import { type BreadcrumbItem, type SharedData, type User } from '@/types';
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
 
 interface Props {
     mustVerifyEmail: boolean;
@@ -20,7 +23,7 @@ defineProps<Props>();
 
 const breadcrumbs: BreadcrumbItem[] = [
     {
-        title: 'Ajustes de perfil',
+        title: t('settings.profile_settings'),
         href: '/settings/profile',
     },
 ];
@@ -89,7 +92,7 @@ const submit = () => {
                     </div>
 
                     <div class="flex items-center gap-4">
-                        <Button :disabled="form.processing">Guardar</Button>
+                        <Button :disabled="form.processing">{{ $t('settings.save') }}</Button>
 
                         <Transition
                             enter-active-class="transition ease-in-out"
@@ -97,7 +100,7 @@ const submit = () => {
                             leave-active-class="transition ease-in-out"
                             leave-to-class="opacity-0"
                         >
-                            <p v-show="form.recentlySuccessful" class="text-sm text-neutral-600">Guardado.</p>
+                            <p v-show="form.recentlySuccessful" class="text-sm text-neutral-600">{{ $t('settings.saved') }}</p>
                         </Transition>
                     </div>
                 </form>
