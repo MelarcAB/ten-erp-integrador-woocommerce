@@ -35,5 +35,14 @@ return [
         ],
     ],
    
+    //obtener el id de empresa de ten para usarlo en los servicios
+    'ten' => [
+        'empresa_id' => env('TEN_EMPRESA_ID'),
+    ],
+    'woocommerce' => [
+        'client_key' => env('WC_CLIENT_KEY'),
+        'client_secret' => env('WC_CLIENT_SECRET'),
+        'base_url' => env('WC_BASE_URL', 'https://tu-tienda.com/wp-json/wc/v3'),
+    ]
 
 ];

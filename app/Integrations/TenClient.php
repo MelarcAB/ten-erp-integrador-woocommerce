@@ -92,4 +92,71 @@ class TenClient
 
         throw new RuntimeException('TEN Products/Get returned an unexpected response shape');
     }
+
+
+
+
+
+
+    /**
+     * POST /Query/Get
+     *
+     * @param int $limit TOP N
+     * @return array<int, array<string, mixed>>  Lista de categorías (arrays)
+     */
+    public function getCategorias(int $limit = 100000): array
+    {
+        $empresaId = (int) config('services.ten.empresa_id', env('TEN_EMPRESA_ID'));
+
+        if ($empresaId <= 0) {
+            throw new RuntimeException('TEN_EMPRESA_ID no está configurado o es inválido.');
+        }
+
+        // Nota: TOP requiere int. Nada de concatenar strings raras.
+        $limit = max(1, $limit);
+
+        $query = "SELECT TOP {$limit} * FROM tblCategoriasWeb WHERE IdEmpresa = {$empresaId}";
+
+        $payload = [
+            'query' => $query,
+        ];
+
+        $url = $this->baseUrl . '/Query/Get';
+
+        $response = $this->http()->post($url, $payload);
+
+        if (! $response->successful()) {
+            Log::warning('TEN Query/Get failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'payload' => $payload,
+            ]);
+
+            throw new RuntimeException("TEN Query/Get failed with HTTP {$response->status()}");
+        }
+
+        $json = $response->json();
+
+        // TEN puede devolver directamente [] o envolverlo
+        if (is_array($json) && array_is_list($json)) {
+            return $json;
+        }
+
+        if (is_array($json)) {
+            foreach (['Rows', 'rows', 'Data', 'data', 'Result', 'result'] as $key) {
+                if (isset($json[$key]) && is_array($json[$key])) {
+                    return $json[$key];
+                }
+            }
+        }
+
+        Log::warning('TEN Query/Get unexpected response shape', [
+            'url' => $url,
+            'payload' => $payload,
+            'json' => $json,
+        ]);
+
+        throw new RuntimeException('TEN Query/Get returned an unexpected response shape');
+    }
 }

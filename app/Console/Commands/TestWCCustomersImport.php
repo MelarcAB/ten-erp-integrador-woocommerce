@@ -2,63 +2,56 @@
 
 namespace App\Console\Commands;
 
-use App\Integrations\TenClient;
-use App\Integrations\Mappers\TenProductMapper;
-use App\Models\Producto;
-use Carbon\Carbon;
+use App\Integrations\Mappers\WooCustomerMapper;
+use App\Integrations\WooCommerceClient;
+use App\Models\Cliente;
 use Illuminate\Console\Command;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
-class TestTenProductsImport extends Command
+class TestWCCustomersImport extends Command
 {
-    protected $signature = 'app:test-ten-products-import
-        {--modified-after= : Fecha "YYYY-MM-DD HH:MM:SS" (default: hoy - 2 semanas)}
-        {--page=0 : Página (default 0)}
-        {--items=100000 : Items por página (default 100000)}
+    protected $signature = 'app:test-wc-customers-import
+        {--per-page=100 : Per page (max 100)}
+        {--page=1 : Page (starts at 1)}
+        {--email= : Filtrar por email}
+        {--search= : Search general}
         {--dry-run : No escribe en DB}
         {--chunk=0 : Tamaño de chunk fijo (0 = auto)}
     ';
 
-    protected $description = 'Import masivo productos desde TEN (/Products/Get) con upsert por chunks';
+    protected $description = 'Import customers desde WooCommerce a tabla clientes (sin direcciones). Marca pending para exportar a TEN';
 
     public function handle(): int
     {
-        $marker = '[TEN_IMPORT_MARKER v5]';
+        $marker = '[WC_CUSTOMERS_IMPORT v1]';
         $this->line($marker . ' start');
         Log::info($marker . ' start');
 
-        $client = app(TenClient::class);
-
-        $modifiedAfterOpt = $this->option('modified-after');
-        $page  = (int) $this->option('page');
-        $items = (int) $this->option('items');
-        $dryRun = (bool) $this->option('dry-run');
+        $perPage = (int) $this->option('per-page');
+        $page    = (int) $this->option('page');
+        $dryRun  = (bool) $this->option('dry-run');
         $chunkOpt = (int) $this->option('chunk');
 
-        $modifiedAfter = null;
-        if ($modifiedAfterOpt) {
-            try {
-                $modifiedAfter = Carbon::createFromFormat('Y-m-d H:i:s', $modifiedAfterOpt);
-            } catch (Throwable) {
-                $this->error('Formato inválido para --modified-after. Usa "YYYY-MM-DD HH:MM:SS"');
-                Log::error($marker . ' invalid modified-after', ['value' => $modifiedAfterOpt]);
-                return self::FAILURE;
-            }
-        }
+        $params = [];
+        if ($email = $this->option('email')) $params['email'] = $email;
+        if ($search = $this->option('search')) $params['search'] = $search;
 
         try {
-            $this->info('Llamando a TEN /Products/Get ...');
-            $tenProducts = $client->getProducts($modifiedAfter, $items, $page);
+            /** @var WooCommerceClient $client */
+            $client = app(WooCommerceClient::class);
+
+            $this->info("GET /customers?per_page={$perPage}&page={$page}");
+            $customers = $client->getClientes($perPage, $page, $params);
         } catch (Throwable $e) {
-            $this->error('Error TEN: ' . $e->getMessage());
-            Log::error($marker . ' TEN call failed', ['error' => $e->getMessage()]);
+            $this->error($marker . ' WC ERROR: ' . $e->getMessage());
+            Log::error($marker . ' WC call failed', ['error' => $e->getMessage()]);
             return self::FAILURE;
         }
 
-        $totalFetched = count($tenProducts);
+        $totalFetched = count($customers);
         $this->info("Recibidos: {$totalFetched}");
         Log::info($marker . ' fetched', ['count' => $totalFetched]);
 
@@ -66,35 +59,26 @@ class TestTenProductsImport extends Command
 
         $now = now();
         $rows = [];
-        $skippedNoTenId = 0;
+        $skippedNoWooId = 0;
 
         $dbCols = $this->dbColumns();
         $dbColsFlip = array_flip($dbCols);
 
-        foreach ($tenProducts as $tenRow) {
-            if (!is_array($tenRow)) continue;
+        foreach ($customers as $wcRow) {
+            if (!is_array($wcRow)) continue;
 
-            $attrs = TenProductMapper::toProductoAttributes($tenRow);
+            $attrs = WooCustomerMapper::toClienteAttributes($wcRow);
 
-            if (empty($attrs['ten_id'])) {
-                $skippedNoTenId++;
+            if (empty($attrs['woocommerce_id'])) {
+                $skippedNoWooId++;
                 continue;
             }
 
-            // TEN NO trae Woo => NULL SIEMPRE
-            $attrs['woocommerce_id'] = null;
-            $attrs['woocommerce_sku'] = null;
-            $attrs['woocommerce_ean'] = null;
-            $attrs['woocommerce_upc'] = null;
-
-            $attrs['ten_hash'] = TenProductMapper::hashFromAttributes($attrs);
-
-            // IMPORTANTE:
-            // - Nuevos productos: pending
-            // - Si el producto ya existía y estaba en synced pero cambió, queremos volver a pending
-            //   -> esto lo decidimos más abajo comparando hashes.
+            // WC -> TEN: siempre entra como pendiente de exportar a TEN
             $attrs['sync_status'] = 'pending';
             $attrs['last_error'] = null;
+
+            $attrs['ten_hash'] = WooCustomerMapper::hashFromAttributes($attrs);
             $attrs['ten_last_fetched_at'] = $now;
 
             $attrs['created_at'] = $now;
@@ -103,14 +87,14 @@ class TestTenProductsImport extends Command
             $rows[] = array_intersect_key($attrs, $dbColsFlip);
         }
 
-        $this->line("Mapeados: " . count($rows) . " | sin ten_id: {$skippedNoTenId}");
-        Log::info($marker . ' mapped', ['valid_rows' => count($rows), 'skipped_no_ten_id' => $skippedNoTenId]);
+        $this->line("Mapeados: " . count($rows) . " | sin woocommerce_id: {$skippedNoWooId}");
+        Log::info($marker . ' mapped', ['valid_rows' => count($rows), 'skipped_no_woocommerce_id' => $skippedNoWooId]);
 
         if (count($rows) === 0) return self::SUCCESS;
 
-        // Dedup por ten_id (por si TEN repite)
+        // Dedup por woocommerce_id
         $before = count($rows);
-        $rows = collect($rows)->keyBy('ten_id')->values()->all();
+        $rows = collect($rows)->keyBy('woocommerce_id')->values()->all();
         $after = count($rows);
         if ($after !== $before) {
             $this->warn("Dedup: {$before} -> {$after} (quitados " . ($before - $after) . ")");
@@ -127,25 +111,22 @@ class TestTenProductsImport extends Command
          * Reglas:
          * - Insertar solo si es nuevo
          * - Actualizar solo si cambió (ten_hash distinto)
-         * - sync_status:
-         *    - nuevos -> pending
-         *    - si cambió y estaba synced -> pending
-         *    - si cambió y estaba pending/error -> mantener pending (ya lo está)
-         *    - si NO cambió -> NO tocar DB
+         * - Si cambió y estaba synced => pending (reencolar)
+         * - Si NO cambió => skip total (no write)
          */
-        $tenIds = array_map(fn($r) => (int)$r['ten_id'], $rows);
+        $wooIds = array_map(fn ($r) => (int) $r['woocommerce_id'], $rows);
 
         $existing = [];
-        foreach (array_chunk($tenIds, 1000) as $idsChunk) {
-            $dbRows = Producto::query()
-                ->whereIn('ten_id', $idsChunk)
-                ->get(['ten_id', 'ten_hash', 'sync_status'])
+        foreach (array_chunk($wooIds, 1000) as $idsChunk) {
+            $dbRows = Cliente::query()
+                ->whereIn('woocommerce_id', $idsChunk)
+                ->get(['woocommerce_id', 'ten_hash', 'sync_status'])
                 ->all();
 
-            foreach ($dbRows as $p) {
-                $existing[(int)$p->ten_id] = [
-                    'ten_hash' => (string)($p->ten_hash ?? ''),
-                    'sync_status' => (string)($p->sync_status ?? 'pending'),
+            foreach ($dbRows as $c) {
+                $existing[(int) $c->woocommerce_id] = [
+                    'ten_hash' => (string)($c->ten_hash ?? ''),
+                    'sync_status' => (string)($c->sync_status ?? 'pending'),
                 ];
             }
         }
@@ -157,11 +138,10 @@ class TestTenProductsImport extends Command
         $requeuedCount = 0;
 
         foreach ($rows as $r) {
-            $id = (int)$r['ten_id'];
-            $newHash = (string)$r['ten_hash'];
+            $id = (int) $r['woocommerce_id'];
+            $newHash = (string) $r['ten_hash'];
 
             if (!isset($existing[$id])) {
-                // Nuevo -> pending ya viene seteado
                 $toUpsert[] = $r;
                 $insertCount++;
                 continue;
@@ -171,18 +151,15 @@ class TestTenProductsImport extends Command
             $oldStatus = $existing[$id]['sync_status'];
 
             if ($oldHash === $newHash) {
-                // Igual -> NO tocar DB
                 $skipCount++;
                 continue;
             }
 
-            // Cambió -> update
-            // Si estaba synced, lo re-enfilamos (pending)
+            // Cambió: reencola si estaba synced
             if ($oldStatus === 'synced') {
                 $r['sync_status'] = 'pending';
                 $requeuedCount++;
             } else {
-                // Si ya estaba pending/error, lo dejamos en pending igualmente
                 $r['sync_status'] = 'pending';
             }
 
@@ -198,11 +175,11 @@ class TestTenProductsImport extends Command
             return self::SUCCESS;
         }
 
-        // Columnas que se actualizan (no tocar created_at ni ten_id)
-        $updateColumns = array_values(array_diff(array_keys($toUpsert[0]), ['ten_id', 'created_at']));
+        // Upsert por woocommerce_id (clave natural aquí)
+        $updateColumns = array_values(array_diff(array_keys($toUpsert[0]), ['woocommerce_id', 'created_at']));
 
-        // --- CHUNK SIZE AUTO para evitar "too many placeholders" ---
-        $colsPerRow = count($dbCols); // aprox
+        // Chunks para no petar placeholders
+        $colsPerRow = count($dbCols);
         $maxPlaceholders = 60000;
         $autoChunk = max(200, (int) floor($maxPlaceholders / max(1, $colsPerRow)));
         $chunkSize = $chunkOpt > 0 ? $chunkOpt : $autoChunk;
@@ -221,7 +198,7 @@ class TestTenProductsImport extends Command
 
             try {
                 DB::transaction(function () use ($chunk, $updateColumns) {
-                    Producto::upsert($chunk, ['ten_id'], $updateColumns);
+                    Cliente::upsert($chunk, ['woocommerce_id'], $updateColumns);
                 });
             } catch (QueryException $e) {
                 $this->error("Chunk {$chunkNum} petó: " . $e->getMessage());
@@ -258,30 +235,32 @@ class TestTenProductsImport extends Command
             'ten_id',
             'ten_codigo',
             'woocommerce_id',
-            'woocommerce_sku',
-            'ten_ean',
-            'ten_upc',
-            'woocommerce_ean',
-            'woocommerce_upc',
-            'ten_id_grupo_productos',
-            'ten_web_nombre',
-            'ten_web_descripcion_corta',
-            'ten_web_descripcion_larga',
-            'ten_web_control_stock',
-            'ten_precio',
-            'ten_bloqueado',
-            'ten_fabricante',
-            'ten_referencia',
-            'ten_catalogo',
-            'ten_prioridad',
-            'ten_fraccionar_formato_venta',
-            'ten_peso',
-            'ten_porc_impost',
-            'ten_porc_recargo',
-            'ten_last_fetched_at',
-            'ten_hash',
+
             'sync_status',
             'last_error',
+
+            'email',
+            'nombre',
+            'apellidos',
+            'nombre_fiscal',
+            'nif',
+            'ten_id_direccion_envio',
+            'ten_id_grupo_clientes',
+            'ten_regimen_impuesto',
+            'ten_persona',
+            'ten_id_tarifa',
+            'ten_vendedor',
+            'ten_forma_pago',
+            'telefono',
+            'telefono2',
+            'web',
+            'ten_calculo_iva_factura',
+            'ten_enviar_emails',
+            'ten_consentimiento_datos',
+
+            'ten_last_fetched_at',
+            'ten_hash',
+
             'created_at',
             'updated_at',
             'deleted_at',

@@ -14,7 +14,7 @@ return new class extends Migration
         Schema::table('productos', function (Blueprint $table) {
             // OJO: el nombre del índice suele ser "productos_woocommerce_id_unique"
             // Si en tu DB tiene otro nombre, ajusta el string.
-            $table->dropUnique('productos_woocommerce_id_unique');
+          //  $table->dropUnique('productos_woocommerce_id_unique');
         });
     }
 
