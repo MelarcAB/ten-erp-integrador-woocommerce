@@ -33,7 +33,7 @@ class WooCommerceClient
             ->retry(
                 (int) config('services.woocommerce.retries', 3),
                 (int) config('services.woocommerce.retry_sleep_ms', 250),
-                fn ($exception) => true
+                fn($exception) => true
             )
             ->acceptJson()
             ->asJson()
@@ -192,5 +192,62 @@ class WooCommerceClient
         ]);
 
         throw new RuntimeException('WC customer PUT returned an unexpected response shape');
+    }
+
+
+
+    /**
+     * GET /orders
+     *
+     * Docs params típicos:
+     * - status: pending|processing|on-hold|completed|cancelled|refunded|failed|trash|any
+     * - after / before (ISO8601): 2026-02-01T00:00:00
+     * - modified_after / modified_before (ISO8601) (según versión)
+     * - customer: id
+     * - search
+     * - orderby: date|modified|id|include|title|slug
+     * - order: asc|desc
+     * - per_page, page
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function getPedidos(int $perPage = 100, int $page = 1, array $params = []): array
+    {
+        $perPage = max(1, min(100, $perPage));
+        $page    = max(1, $page);
+
+        $query = array_merge([
+            'per_page' => $perPage,
+            'page'     => $page,
+        ], $params);
+
+        $url = $this->baseUrl . '/orders';
+
+        $response = $this->http()->get($url, $query);
+
+        if (! $response->successful()) {
+            Log::warning('WC orders GET failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'query' => $query,
+            ]);
+
+            throw new RuntimeException("WC orders GET failed with HTTP {$response->status()}");
+        }
+
+        $json = $response->json();
+
+        if (is_array($json) && array_is_list($json)) {
+            return $json;
+        }
+
+        Log::warning('WC orders GET unexpected response shape', [
+            'url' => $url,
+            'query' => $query,
+            'json' => $json,
+        ]);
+
+        throw new RuntimeException('WC orders GET returned an unexpected response shape');
     }
 }
