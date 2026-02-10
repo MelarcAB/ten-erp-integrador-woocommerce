@@ -482,9 +482,12 @@ class TestWCPedidosImport extends Command
             'wc_date_completed' => $str($wc['date_completed'] ?? null),
             'wc_date_paid' => $str($wc['date_paid'] ?? null),
 
-            'billing' => is_array($wc['billing'] ?? null) ? $wc['billing'] : null,
-            'shipping' => is_array($wc['shipping'] ?? null) ? $wc['shipping'] : null,
-            'meta_data' => is_array($wc['meta_data'] ?? null) ? $wc['meta_data'] : null,
+            // IMPORTANTE: para upsert (query builder) normalizamos arrays JSON a string.
+            // Si no, MySQL/PDO casca con "Array to string conversion".
+            'billing' => $this->jsonOrNull($wc['billing'] ?? null),
+            'shipping' => $this->jsonOrNull($wc['shipping'] ?? null),
+            'meta_data' => $this->jsonOrNull($wc['meta_data'] ?? null),
+
             'cart_hash' => $str($wc['cart_hash'] ?? null),
             'payment_url' => $str($wc['payment_url'] ?? null),
 
@@ -538,8 +541,9 @@ class TestWCPedidosImport extends Command
             'image_id' => $int($image['id'] ?? null),
             'image_src' => $str($image['src'] ?? null),
 
-            'taxes' => is_array($li['taxes'] ?? null) ? $li['taxes'] : null,
-            'meta_data' => is_array($li['meta_data'] ?? null) ? $li['meta_data'] : null,
+            // IMPORTANTE: normalizamos JSON para upsert
+            'taxes' => $this->jsonOrNull($li['taxes'] ?? null),
+            'meta_data' => $this->jsonOrNull($li['meta_data'] ?? null),
         ];
 
         foreach ($attrs as $k => $v) {
@@ -672,5 +676,26 @@ class TestWCPedidosImport extends Command
             'updated_at',
             'deleted_at',
         ];
+    }
+
+    /**
+     * Convierte arrays/objetos a JSON (string) o devuelve null.
+     *
+     * @param mixed $value
+     */
+    private function jsonOrNull(mixed $value): ?string
+    {
+        if ($value === null) return null;
+
+        if (is_string($value)) {
+            $trim = trim($value);
+            return $trim === '' ? null : $trim;
+        }
+
+        if (is_array($value) || is_object($value)) {
+            return json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        }
+
+        return (string) $value;
     }
 }
