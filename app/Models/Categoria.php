@@ -12,6 +12,14 @@ class Categoria extends Model
     protected $table = 'categorias';
 
     /**
+     * La tabla categorias NO tiene columna id.
+     * Usamos ten_id_numero como clave primaria natural.
+     */
+    protected $primaryKey = 'ten_id_numero';
+    public $incrementing = false;
+    protected $keyType = 'int';
+
+    /**
      * Campos asignables en mass-assignment
      */
     protected $fillable = [
