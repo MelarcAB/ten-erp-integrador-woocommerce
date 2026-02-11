@@ -12,6 +12,19 @@ class Cliente extends Model
 
     protected $table = 'clientes';
 
+    /**
+     * La tabla `clientes` no tiene columna `id`.
+     * Usamos `woocommerce_id` como identificador natural.
+     */
+    protected $primaryKey = 'woocommerce_id';
+
+    /**
+     * WooCommerce IDs no son autoincrementales en nuestra BD.
+     */
+    public $incrementing = false;
+
+    protected $keyType = 'int';
+
     protected $fillable = [
         // Identificadores / mapeo
         'ten_id',
@@ -71,6 +84,11 @@ class Cliente extends Model
         $this->sync_status = 'error';
         $this->last_error = $error;
         $this->save();
+    }
+
+    public function direcciones()
+    {
+        return $this->hasMany(Direcciones::class, 'cliente_id', 'woocommerce_id');
     }
 
 }

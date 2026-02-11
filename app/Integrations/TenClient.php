@@ -93,10 +93,133 @@ class TenClient
         throw new RuntimeException('TEN Products/Get returned an unexpected response shape');
     }
 
+    /**
+     * POST /Customers/Get
+     *
+     * @return array<int, array<string, mixed>> Lista de clientes (arrays) tal y como lo devuelve TEN
+     */
+    public function getCustomers(?Carbon $modifiedAfter = null, int $items = 100000, int $page = 0): array
+    {
+        $modifiedAfter ??= now()->subWeeks(2);
 
+        $payload = [
+            'ModifiedAfter' => $modifiedAfter->format('Y-m-d H:i:s'),
+            'Paginate' => [
+                'items' => $items,
+                'page' => $page,
+            ],
+        ];
 
+        $url = $this->baseUrl . '/Customers/Get';
+        $response = $this->http()->post($url, $payload);
 
+        if (! $response->successful()) {
+            Log::warning('TEN Customers/Get failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'payload' => $payload,
+            ]);
 
+            throw new RuntimeException("TEN Customers/Get failed with HTTP {$response->status()}");
+        }
+
+        return $this->extractListFromTenResponse($response->json(), ['Customers', 'customers']);
+    }
+
+    /**
+     * Endpoint legacy que nos has indicado (minúsculas): POST /customers/get
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function getCustomersLegacy(?Carbon $modifiedAfter = null): array
+    {
+        $modifiedAfter ??= now()->subWeeks(2);
+
+        $payload = [
+            'ModifiedAfter' => $modifiedAfter->format('Y-m-d H:i:s'),
+        ];
+
+        $url = $this->baseUrl . '/customers/get';
+        $response = $this->http()->post($url, $payload);
+
+        if (! $response->successful()) {
+            Log::warning('TEN customers/get failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'payload' => $payload,
+            ]);
+
+            throw new RuntimeException("TEN customers/get failed with HTTP {$response->status()}");
+        }
+
+        return $this->extractListFromTenResponse($response->json(), ['Customers', 'customers']);
+    }
+
+    /**
+     * POST /Customers/Set
+     *
+     * @param array<int, array<string, mixed>> $customers
+     * @return array<string, mixed>
+     */
+    public function setCustomers(array $customers): array
+    {
+        $payload = [
+            'Customers' => array_values($customers),
+        ];
+
+        $url = $this->baseUrl . '/Customers/Set';
+        $response = $this->http()->post($url, $payload);
+
+        if (! $response->successful()) {
+            Log::warning('TEN Customers/Set failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'payload' => $payload,
+            ]);
+
+            throw new RuntimeException("TEN Customers/Set failed with HTTP {$response->status()}");
+        }
+
+        $json = $response->json();
+
+        // OJO: si json() devuelve null (body vacío/no-JSON), devolvemos raw explícito para diagnóstico
+        if ($json === null) {
+            return [
+                'raw' => null,
+                'http_status' => $response->status(),
+                'body' => $response->body(),
+            ];
+        }
+
+        return is_array($json) ? $json : ['raw' => $json];
+    }
+
+    /**
+     * @param mixed $json
+     * @param array<int, string> $preferredKeys
+     * @return array<int, array<string, mixed>>
+     */
+    private function extractListFromTenResponse(mixed $json, array $preferredKeys = []): array
+    {
+        // TEN a veces devuelve directamente [...]
+        if (is_array($json) && array_is_list($json)) {
+            return $json;
+        }
+
+        if (is_array($json)) {
+            foreach (array_merge($preferredKeys, ['Data', 'data', 'Result', 'result', 'Rows', 'rows', 'Items', 'items']) as $key) {
+                if (isset($json[$key]) && is_array($json[$key])) {
+                    return $json[$key];
+                }
+            }
+        }
+
+        Log::warning('TEN unexpected response shape', ['json' => $json]);
+        throw new RuntimeException('TEN returned an unexpected response shape');
+    }
 
     /**
      * POST /Query/Get

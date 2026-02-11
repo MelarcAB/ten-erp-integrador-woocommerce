@@ -38,7 +38,13 @@ return [
     //obtener el id de empresa de ten para usarlo en los servicios
     'ten' => [
         'empresa_id' => env('TEN_EMPRESA_ID'),
+        'base_url' => env('TEN_BASE_URL', 'http://81.42.251.21:2223'),
+        'timeout' => env('TEN_TIMEOUT', 60),
+        'connect_timeout' => env('TEN_CONNECT_TIMEOUT', 10),
+        'retries' => env('TEN_RETRIES', 3),
+        'retry_sleep_ms' => env('TEN_RETRY_SLEEP_MS', 250),
     ],
+
     'woocommerce' => [
         'client_key' => env('WC_CLIENT_KEY'),
         'client_secret' => env('WC_CLIENT_SECRET'),
