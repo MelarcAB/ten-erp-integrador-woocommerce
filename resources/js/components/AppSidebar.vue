@@ -5,7 +5,7 @@ import NavUser from '@/components/NavUser.vue';
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar';
 import { type NavItem } from '@/types';
 import { Link } from '@inertiajs/vue3';
-import { BookOpen, Folder, LayoutGrid } from 'lucide-vue-next';
+import { BookOpen, Folder, LayoutGrid, Package } from 'lucide-vue-next';
 import AppLogo from './AppLogo.vue';
 
 const mainNavItems: NavItem[] = [
@@ -18,6 +18,11 @@ const mainNavItems: NavItem[] = [
         title: 'Categories',
         href: '/categorias',
         icon: LayoutGrid,
+    },
+    {
+        title: 'Products',
+        href: '/productos',
+        icon: Package,
     },
   /*  {
         title: 'Profile',
@@ -43,6 +48,11 @@ const footerNavItems: NavItem[] = [
         icon: BookOpen,
     },*/
 ];
+
+// Asegura que el template tenga acceso tipado a estas constantes
+// (algunos checkers de Vue se confunden con arrays/const vacíos + comentarios)
+void footerNavItems;
+void mainNavItems;
 </script>
 
 <template>
