@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\CategoriaController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 use App\Http\Controllers\HomeController;
@@ -19,6 +20,9 @@ Route::get('home', function () {
     auth()->user()->assignRole('admin');
     return Inertia::render('Dashboard');
 })->middleware(['auth', 'verified'])->name('dashboard');
+
+
+Route::get('categorias', [CategoriaController::class, 'index'])->name('categorias')->middleware(['auth', 'verified']);
 
 require __DIR__.'/settings.php';
 require __DIR__.'/auth.php';
