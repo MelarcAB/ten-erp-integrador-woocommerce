@@ -2,6 +2,8 @@
 
 use App\Http\Controllers\CategoriaController;
 use App\Http\Controllers\ProductoController;
+use App\Http\Controllers\ClienteController;
+use App\Http\Controllers\PedidosController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 use App\Http\Controllers\HomeController;
@@ -25,6 +27,8 @@ Route::get('home', function () {
 
 Route::get('categorias', [CategoriaController::class, 'index'])->name('categorias')->middleware(['auth', 'verified']);
 Route::get('productos', [ProductoController::class, 'index'])->name('productos')->middleware(['auth', 'verified']);
+Route::get('clientes', [ClienteController::class, 'index'])->name('clientes')->middleware(['auth', 'verified']);
+Route::get('pedidos', [PedidosController::class, 'index'])->name('pedidos')->middleware(['auth', 'verified']);
 
 require __DIR__.'/settings.php';
 require __DIR__.'/auth.php';

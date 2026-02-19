@@ -27,6 +27,7 @@ class Producto extends Model
         'ten_peso'              => 'decimal:9',
         'ten_porc_impost'       => 'decimal:9',
         'ten_porc_recargo'      => 'decimal:9',
+        'stock'                  => 'integer',
     ];
 
     /**

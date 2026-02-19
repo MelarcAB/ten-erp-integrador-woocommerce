@@ -16,6 +16,11 @@ use Throwable;
  * - Selección: enable_sync=1, sync_status=pending (por defecto), ten_bloqueado=0
  * - Identificación en Woo: por slug derivado de ten_web_nombre/ten_nombre/ten_codigo.
  * - Jerarquía: primero categorías raíz, luego hijas (usando ten_categoria_padre).
+ *
+ * REVISIÓN 2026-02:
+ * - Para evitar enlazados incorrectos cuando existen coincidencias por slug,
+ *   al buscar en Woo se filtra por el parent esperado (0 para root).
+ * - Se cachea "slug|parent" para que la resolución sea determinista.
  */
 class TestWCSyncCategories extends Command
 {
@@ -43,6 +48,8 @@ class TestWCSyncCategories extends Command
         }
 
         $q = Categoria::query()
+            // Requisito: el sync debe procesar SIEMPRE todas las categorías pendientes.
+            // enable_sync no se usa como filtro porque en la importación inicial suele venir a 0.
             ->where(function ($sub) {
                 $sub->whereNull('ten_bloqueado')->orWhere('ten_bloqueado', false)->orWhere('ten_bloqueado', 0);
             });
@@ -76,8 +83,10 @@ class TestWCSyncCategories extends Command
         $skipped = 0;
         $errors  = 0;
 
-        // Cache slug->wooId
+        // Cache slug->wooId (solo para casos donde el parent sea irrelevante)
         $wooIdBySlug = [];
+        // Cache por slug+parent: evita colisiones y enlaza determinísticamente
+        $wooIdBySlugParent = [];
 
         // Cache ten_id->wooId precargado desde DB (IMPORTANTE: evita SKIPs si el padre ya estaba sincronizado en ejecuciones previas)
         $wooIdByTenId = Categoria::query()
@@ -86,7 +95,6 @@ class TestWCSyncCategories extends Command
             ->map(fn($v) => (int) $v)
             ->all();
 
-        // Particionar: roots primero para maximizar resoluciones
         $pending = $cats->values()->all();
 
         $maxPasses = 10;
@@ -155,9 +163,72 @@ class TestWCSyncCategories extends Command
                     if (isset($wooIdByTenId[$tenParentId])) {
                         $wooParentId = (int) $wooIdByTenId[$tenParentId];
                     } else {
-                        // No resoluble todavía: lo dejamos para la siguiente pasada
-                        $nextPending[] = $c;
-                        continue;
+                        // Intentar resolver el parent consultando la categoría padre en nuestra DB
+                        // (y si hace falta, buscarla en Woo por slug+parent) para evitar SKIPs cuando el padre ya existe en Woo.
+                        $parentRow = Categoria::query()->where('ten_id_numero', $tenParentId)->first();
+
+                        if ($parentRow) {
+                            if (!empty($parentRow->woocommerce_categoria_id)) {
+                                $wooParentId = (int) $parentRow->woocommerce_categoria_id;
+                                $wooIdByTenId[$tenParentId] = $wooParentId;
+                            } else {
+                                $parentName = $this->categoriaNombre($parentRow);
+                                $parentSlug = $this->slugify($parentName);
+
+                                if ($parentSlug !== '') {
+                                    // Para el padre, si desconocemos su parent en Woo, intentamos resolverlo también:
+                                    // - si el padre TEN tiene padre => intentamos resolver primero el abuelo.
+                                    // - si no, root.
+                                    $grandTenParentId = (int)($parentRow->ten_categoria_padre ?? 0);
+                                    $expectedParentOfParentWooId = 0;
+
+                                    if ($grandTenParentId > 0 && isset($wooIdByTenId[$grandTenParentId])) {
+                                        $expectedParentOfParentWooId = (int) $wooIdByTenId[$grandTenParentId];
+                                    }
+
+                                    $parentWooId = 0;
+                                    if (!$dryRun) {
+                                        $parentWooId = $this->findWooCategoryIdBySlugAndParent(
+                                            client: $client,
+                                            slug: $parentSlug,
+                                            expectedWooParentId: $expectedParentOfParentWooId,
+                                            wooIdBySlugParent: $wooIdBySlugParent,
+                                            marker: $marker,
+                                            context: ['ten_id' => $tenParentId, 'kind' => 'resolve_parent']
+                                        );
+
+                                        // fallback: si no lo encontramos con parent esperado, probamos sin filtrar parent (último recurso)
+                                        if ($parentWooId <= 0) {
+                                            $parentWooId = $this->findWooCategoryIdBySlugAndParent(
+                                                client: $client,
+                                                slug: $parentSlug,
+                                                expectedWooParentId: null,
+                                                wooIdBySlugParent: $wooIdBySlugParent,
+                                                marker: $marker,
+                                                context: ['ten_id' => $tenParentId, 'kind' => 'resolve_parent_fallback']
+                                            );
+                                        }
+                                    }
+
+                                    if ($parentWooId > 0) {
+                                        $wooParentId = $parentWooId;
+                                        $wooIdByTenId[$tenParentId] = $parentWooId;
+
+                                        if (!$dryRun) {
+                                            $parentRow->woocommerce_categoria_id = $parentWooId;
+                                            $parentRow->sync_status = 'synced';
+                                            $parentRow->last_error = null;
+                                            $parentRow->save();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if ($wooParentId <= 0) {
+                            $nextPending[] = $c;
+                            continue;
+                        }
                     }
                 }
 
@@ -179,6 +250,7 @@ class TestWCSyncCategories extends Command
                             $synced++;
                             $wooIdByTenId[$tenId] = $wooId;
                             $wooIdBySlug[$slug] = $wooId;
+                            $wooIdBySlugParent[$this->slugParentKey($slug, $wooParentId)] = $wooId;
                             $progressThisPass++;
                             continue;
                         }
@@ -195,6 +267,7 @@ class TestWCSyncCategories extends Command
 
                         $wooIdByTenId[$tenId] = $wcId;
                         $wooIdBySlug[$slug] = $wcId;
+                        $wooIdBySlugParent[$this->slugParentKey($slug, $wcParent)] = $wcId;
 
                         $this->line("[TEN#{$tenId}] UPDATE WooCat#{$wcId} slug={$slug} parent={$wcParent}");
                         Log::info($marker . ' item update', [
@@ -226,21 +299,19 @@ class TestWCSyncCategories extends Command
                         continue;
                     }
 
-                    // Buscar por slug
-                    $wooId = 0;
-                    if (isset($wooIdBySlug[$slug])) {
-                        $wooId = (int) $wooIdBySlug[$slug];
-                    } else {
-                        $found = $client->getCategoriasProductosBySlug($slug, 100, 1);
-                        $first = $found[0] ?? null;
-                        if (is_array($first) && !empty($first['id'])) {
-                            $wooId = (int) $first['id'];
-                            $wooIdBySlug[$slug] = $wooId;
-                        }
-                    }
+                    // Buscar por slug + parent esperado (0 para root)
+                    $wooId = $this->findWooCategoryIdBySlugAndParent(
+                        client: $client,
+                        slug: $slug,
+                        expectedWooParentId: $wooParentId,
+                        wooIdBySlugParent: $wooIdBySlugParent,
+                        marker: $marker,
+                        context: ['ten_id' => $tenId, 'kind' => 'link_by_slug_parent']
+                    );
 
+                    // Fallback muy conservador: si no hay match por parent, NO enlazamos "a ciegas".
+                    // En ese caso, creamos una categoría nueva en el parent correcto.
                     if ($wooId > 0) {
-                        // Enlazar + update
                         $resp = $client->updateCategoriaProducto($wooId, $payload);
                         $wcId = (int)($resp['id'] ?? $wooId);
                         $wcParent = (int)($resp['parent'] ?? $wooParentId);
@@ -253,6 +324,7 @@ class TestWCSyncCategories extends Command
 
                         $wooIdByTenId[$tenId] = $wcId;
                         $wooIdBySlug[$slug] = $wcId;
+                        $wooIdBySlugParent[$this->slugParentKey($slug, $wcParent)] = $wcId;
 
                         $this->line("[TEN#{$tenId}] LINK WooCat#{$wcId} slug={$slug} parent={$wcParent}");
                         Log::info($marker . ' item link', [
@@ -288,6 +360,7 @@ class TestWCSyncCategories extends Command
 
                     $wooIdByTenId[$tenId] = $wcId;
                     $wooIdBySlug[$slug] = $wcId;
+                    $wooIdBySlugParent[$this->slugParentKey($slug, $wcParent)] = $wcId;
 
                     $this->line("[TEN#{$tenId}] CREATE WooCat#{$wcId} slug={$slug} parent={$wcParent}");
                     Log::info($marker . ' item create', [
@@ -386,12 +459,103 @@ class TestWCSyncCategories extends Command
         $value = str_replace(['í','ì','ï','î'], 'i', $value);
         $value = str_replace(['ó','ò','ö','ô','õ'], 'o', $value);
         $value = str_replace(['ú','ù','ü','û'], 'u', $value);
-        $value = str_replace(['ñ'], 'n', $value);
+        // Incluir ñ y Ñ para evitar slugs distintos según el origen del texto
+        $value = str_replace(['ñ', 'Ñ'], 'n', $value);
 
         $value = preg_replace('/[^a-z0-9\s\-]/u', '', $value) ?? '';
         $value = preg_replace('/[\s\-]+/u', '-', $value) ?? '';
         $value = trim($value, '-');
 
         return $value;
+    }
+
+    private function slugParentKey(string $slug, ?int $wooParentId): string
+    {
+        $p = (int)($wooParentId ?? 0);
+        return $slug . '|' . $p;
+    }
+
+    /**
+     * Busca una categoría en Woo por slug y (si se indica) por parent esperado.
+     *
+     * - Si expectedWooParentId es int, solo devuelve match con ese parent.
+     * - Si expectedWooParentId es null, devuelve el primer resultado (con warning si hay múltiple).
+     */
+    private function findWooCategoryIdBySlugAndParent(
+        WooCommerceClient $client,
+        string $slug,
+        int|null $expectedWooParentId,
+        array &$wooIdBySlugParent,
+        string $marker,
+        array $context = []
+    ): int {
+        $slug = trim($slug);
+        if ($slug === '') return 0;
+
+        $cacheKey = $this->slugParentKey($slug, $expectedWooParentId);
+        if (isset($wooIdBySlugParent[$cacheKey])) {
+            return (int) $wooIdBySlugParent[$cacheKey];
+        }
+
+        $found = $client->getCategoriasProductosBySlug($slug, 100, 1);
+        if (!is_array($found) || count($found) === 0) {
+            return 0;
+        }
+
+        // Si no filtramos por parent, devolvemos el primero pero registramos si hay ambigüedad
+        if ($expectedWooParentId === null) {
+            if (count($found) > 1) {
+                Log::warning($marker . ' ambiguous woo category (slug)', array_merge($context, [
+                    'slug' => $slug,
+                    'expected_parent' => null,
+                    'candidates' => array_map(fn($x) => [
+                        'id' => $x['id'] ?? null,
+                        'parent' => $x['parent'] ?? null,
+                        'name' => $x['name'] ?? null,
+                        'slug' => $x['slug'] ?? null,
+                    ], $found),
+                ]));
+            }
+
+            $first = $found[0] ?? null;
+            if (is_array($first) && !empty($first['id'])) {
+                $id = (int) $first['id'];
+                $wooIdBySlugParent[$cacheKey] = $id;
+                return $id;
+            }
+            return 0;
+        }
+
+        $expected = (int) $expectedWooParentId;
+        $matches = [];
+        foreach ($found as $row) {
+            if (!is_array($row) || empty($row['id'])) continue;
+            $p = (int)($row['parent'] ?? 0);
+            if ($p === $expected) {
+                $matches[] = $row;
+            }
+        }
+
+        if (count($matches) === 0) {
+            return 0;
+        }
+
+        if (count($matches) > 1) {
+            Log::warning($marker . ' ambiguous woo category (slug+parent)', array_merge($context, [
+                'slug' => $slug,
+                'expected_parent' => $expected,
+                'matches' => array_map(fn($x) => [
+                    'id' => $x['id'] ?? null,
+                    'parent' => $x['parent'] ?? null,
+                    'name' => $x['name'] ?? null,
+                ], $matches),
+            ]));
+        }
+
+        $id = (int)($matches[0]['id'] ?? 0);
+        if ($id > 0) {
+            $wooIdBySlugParent[$cacheKey] = $id;
+        }
+        return $id;
     }
 }

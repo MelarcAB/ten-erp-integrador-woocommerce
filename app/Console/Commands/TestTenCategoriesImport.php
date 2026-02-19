@@ -64,9 +64,12 @@ class TestTenCategoriesImport extends Command
                 continue;
             }
 
-            // TEN NO trae Woo => NULL SIEMPRE
-            $attrs['woocommerce_categoria_id'] = null;
-            $attrs['woocommerce_categoria_padre_id'] = null;
+            // IMPORTANTE:
+            // TEN no trae woo mapping, pero NO debemos sobrescribirlo a NULL en import,
+            // porque eso rompe la relación ya creada localmente y hace que el sync
+            // no pueda "reconocer" categorías existentes.
+            // Si hay columnas woocommerce_categoria_* aquí, las eliminamos del row.
+            unset($attrs['woocommerce_categoria_id'], $attrs['woocommerce_categoria_padre_id']);
 
             // enable_sync: NO LO TOCAMOS nunca en import (se gestiona manualmente)
             // Si lo metes aquí, te lo cargas cada import. Lo excluimos del row.

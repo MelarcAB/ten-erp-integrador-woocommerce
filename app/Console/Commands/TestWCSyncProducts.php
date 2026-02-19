@@ -14,6 +14,7 @@ class TestWCSyncProducts extends Command
         {--only=pending : pending|error|all}
         {--limit=0 : Límite de productos a procesar (0 = sin límite)}
         {--dry-run : No llama a Woo ni escribe en DB}
+        {--sync-stock : Actualiza stock en Woo para productos con woocommerce_id y stock>0}
     ';
 
     protected $description = 'Sync productos APP->WooCommerce (alta/enlace/actualización) usando ten_codigo como SKU';
@@ -27,6 +28,7 @@ class TestWCSyncProducts extends Command
         $only = (string) $this->option('only');
         $limit = (int) $this->option('limit');
         $dryRun = (bool) $this->option('dry-run');
+        $syncStock = (bool) $this->option('sync-stock');
 
         if (!in_array($only, ['pending', 'error', 'all'], true)) {
             $this->error('Valor inválido para --only. Usa: pending|error|all');
@@ -35,16 +37,23 @@ class TestWCSyncProducts extends Command
 
         $q = Producto::query();
 
-        if ($only === 'pending') {
-            $q->where('sync_status', 'pending');
-        } elseif ($only === 'error') {
-            $q->where('sync_status', 'error');
-        }
+        if ($syncStock) {
+            // Modo stock: solo productos enlazados y con stock positivo
+            $q->whereNotNull('woocommerce_id')
+                ->where('woocommerce_id', '!=', '')
+                ->where('stock', '>', 0);
+        } else {
+            if ($only === 'pending') {
+                $q->where('sync_status', 'pending');
+            } elseif ($only === 'error') {
+                $q->where('sync_status', 'error');
+            }
 
-        // No sincronizar bloqueados
-        $q->where(function ($sub) {
-            $sub->whereNull('ten_bloqueado')->orWhere('ten_bloqueado', false)->orWhere('ten_bloqueado', 0);
-        });
+            // No sincronizar bloqueados
+            $q->where(function ($sub) {
+                $sub->whereNull('ten_bloqueado')->orWhere('ten_bloqueado', false)->orWhere('ten_bloqueado', 0);
+            });
+        }
 
         // Necesitamos SKU (ten_codigo) para enlace/alta (si no -> error)
         $q->orderByDesc('ten_last_fetched_at')->orderByDesc('id');
@@ -75,7 +84,8 @@ class TestWCSyncProducts extends Command
             /** @var Producto $p */
             $sku = trim((string) ($p->ten_codigo ?? ''));
 
-            if ($sku === '') {
+            // En modo sync-stock, el SKU no es relevante para el update (ya tenemos woocommerce_id)
+            if (!$syncStock && $sku === '') {
                 $errors++;
                 $msg = 'Producto sin ten_codigo (SKU)';
                 $this->warn("[{$p->id}] ERROR: {$msg}");
@@ -90,7 +100,7 @@ class TestWCSyncProducts extends Command
             }
 
             // Payload base (sirve tanto para alta como update)
-            $payload = $this->toWooPayload($p);
+            $payload = $this->toWooPayload($p, $syncStock);
 
             try {
                 // 1) Si ya tiene woo id -> update
@@ -98,31 +108,43 @@ class TestWCSyncProducts extends Command
                     $wooId = (int) $p->woocommerce_id;
 
                     if ($dryRun) {
-                        $this->line("[{$p->id}] UPDATE Woo #{$wooId} sku={$sku}");
+                        $this->line("[{$p->id}] UPDATE Woo #{$wooId}" . ($syncStock ? " (stock={$p->stock})" : " sku={$sku}"));
                         $updated++;
                         $synced++;
                         continue;
                     }
 
-                    // Si en Woo ya hay description, la preservamos (no la sobreescribimos)
-                    $remote = $client->getProductoById($wooId);
-                    $remoteDesc = is_array($remote) ? trim((string)($remote['description'] ?? '')) : '';
-                    if ($remoteDesc !== '') {
-                        unset($payload['description']);
+                    // Si estamos en modo stock, no hace falta preservar description (no la mandamos)
+                    if (!$syncStock) {
+                        // Si en Woo ya hay description, la preservamos (no la sobreescribimos)
+                        $remote = $client->getProductoById($wooId);
+                        $remoteDesc = is_array($remote) ? trim((string)($remote['description'] ?? '')) : '';
+                        if ($remoteDesc !== '') {
+                            unset($payload['description']);
+                        }
                     }
 
                     $resp = $client->updateProducto($wooId, $payload);
                     $wcId = (int)($resp['id'] ?? $wooId);
                     $wcSku = (string)($resp['sku'] ?? $sku);
 
-                    $p->woocommerce_id = $wcId;
-                    $p->woocommerce_sku = $wcSku !== '' ? $wcSku : $sku;
-                    $p->sync_status = 'synced';
-                    $p->last_error = null;
-                    $p->save();
+                    // En modo stock no tocamos sync_status del producto (es un sync operativo, no de catálogo)
+                    if (!$syncStock) {
+                        $p->woocommerce_id = $wcId;
+                        $p->woocommerce_sku = $wcSku !== '' ? $wcSku : $sku;
+                        $p->sync_status = 'synced';
+                        $p->last_error = null;
+                        $p->save();
+                    }
 
                     $updated++;
                     $synced++;
+                    continue;
+                }
+
+                // Si estamos en modo stock, no debemos crear/enlazar nada
+                if ($syncStock) {
+                    $skipped++;
                     continue;
                 }
 
@@ -206,8 +228,16 @@ class TestWCSyncProducts extends Command
      *
      * @return array<string,mixed>
      */
-    private function toWooPayload(Producto $p): array
+    private function toWooPayload(Producto $p, bool $stockOnly = false): array
     {
+        if ($stockOnly) {
+            // Solo actualizar stock en Woo
+            return array_filter([
+                'manage_stock' => true,
+                'stock_quantity' => max(0, (int)($p->stock ?? 0)),
+            ], fn($v) => $v !== null);
+        }
+
         $sku = trim((string)($p->ten_codigo ?? ''));
 
         $name = trim((string)($p->ten_web_nombre ?? ''));
