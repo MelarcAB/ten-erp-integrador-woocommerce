@@ -67,6 +67,7 @@ class TestTenProductsImport extends Command
         $now = now();
         $rows = [];
         $skippedNoTenId = 0;
+        $skippedBlocked = 0;
 
         $dbCols = $this->dbColumns();
         $dbColsFlip = array_flip($dbCols);
@@ -75,6 +76,13 @@ class TestTenProductsImport extends Command
             if (!is_array($tenRow)) continue;
 
             $attrs = TenProductMapper::toProductoAttributes($tenRow);
+
+            // Si TEN marca el producto como bloqueado, descartarlo del import.
+            // Regla negocio: Bloqueado=1 => no se inserta/actualiza.
+            if (!empty($attrs['ten_bloqueado'])) {
+                $skippedBlocked++;
+                continue;
+            }
 
             if (empty($attrs['ten_id'])) {
                 $skippedNoTenId++;
@@ -103,8 +111,8 @@ class TestTenProductsImport extends Command
             $rows[] = array_intersect_key($attrs, $dbColsFlip);
         }
 
-        $this->line("Mapeados: " . count($rows) . " | sin ten_id: {$skippedNoTenId}");
-        Log::info($marker . ' mapped', ['valid_rows' => count($rows), 'skipped_no_ten_id' => $skippedNoTenId]);
+        $this->line("Mapeados: " . count($rows) . " | sin ten_id: {$skippedNoTenId} | bloqueados: {$skippedBlocked}");
+        Log::info($marker . ' mapped', ['valid_rows' => count($rows), 'skipped_no_ten_id' => $skippedNoTenId, 'skipped_blocked' => $skippedBlocked]);
 
         if (count($rows) === 0) return self::SUCCESS;
 

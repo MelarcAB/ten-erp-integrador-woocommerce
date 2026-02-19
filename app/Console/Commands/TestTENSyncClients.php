@@ -272,8 +272,9 @@ class TestTENSyncClients extends Command
                         $dir->last_error = null;
                         $dir->ten_last_fetched_at = now();
 
-                        $codigoDir = (string)($dir->woocommerce_customer_id ?? $cliente->woocommerce_id ?? $cliente->id);
-                        if (isset($dirsByCodigo[$codigoDir]) && $dirsByCodigo[$codigoDir] !== '' && $dirsByCodigo[$codigoDir] !== '-1') {
+                        // MATCH por Codigo devuelto por TEN. Nosotros enviamos Codigo = id local de la dirección (row id).
+                        $codigoDir = (string)$dir->getKey();
+                        if (isset($dirsByCodigo[$codigoDir]) && $dirsByCodigo[$codigoDir] !== '' && $dirsByCodigo[$codigoDir] !== '-1' && $dirsByCodigo[$codigoDir] !== '0') {
                             $dir->ten_id_ten = $dirsByCodigo[$codigoDir];
                         }
 
@@ -316,10 +317,10 @@ class TestTENSyncClients extends Command
         $dirs = [];
         foreach ($cliente->direcciones as $dir) {
             if (!$dir instanceof Direcciones) continue;
-            $dirs[] = [
-                // Probamos a NO enviar Codigo para dirección (en TEN puede ser opcional; y así evitamos duplicados)
-                // 'Codigo' => (string) ...,
-                'IdTen' => (string)($dir->ten_id_ten ?? '-1'),
+
+            // Codigo debe ser el id local (row id en nuestra BD)
+            $dirPayload = [
+                'Codigo' => (string)($dir->getKey()),
                 'Nombre' => (string)($dir->ten_nombre ?? $dir->first_name ?? $cliente->nombre ?? ''),
                 'Apellidos' => (string)($dir->ten_apellidos ?? $dir->last_name ?? $cliente->apellidos ?? ''),
                 'Direccion' => (string)($dir->ten_direccion ?? $dir->address_1 ?? ''),
@@ -333,11 +334,19 @@ class TestTENSyncClients extends Command
                 // En el ejemplo AditionalData es {}, no []
                 'AditionalData' => (object) (is_array($dir->ten_aditional_data) ? $dir->ten_aditional_data : (array)($dir->ten_aditional_data ?? [])),
             ];
+
+            // Si no hay IdTen, NO enviar el campo (en vez de mandar -1)
+            if (!empty($dir->ten_id_ten) && (string)$dir->ten_id_ten !== '-1' && (string)$dir->ten_id_ten !== '0') {
+                $dirPayload['IdTen'] = (string) $dir->ten_id_ten;
+            }
+
+            $dirs[] = $dirPayload;
         }
 
         if (empty($dirs)) {
+            // Si no hay direcciones en DB, enviamos una "vacía" pero con Codigo local estable.
             $dirs[] = [
-                'IdTen' => '-1',
+                'Codigo' => (string)($cliente->getKey()),
                 'Nombre' => (string)($cliente->nombre ?? ''),
                 'Apellidos' => (string)($cliente->apellidos ?? ''),
                 'Direccion' => '',
