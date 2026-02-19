@@ -198,6 +198,45 @@ class TenClient
     }
 
     /**
+     * POST /Orders/Set
+     *
+     * @param array<int, array<string, mixed>> $orders
+     * @return array<string, mixed>|array<int, mixed>
+     */
+    public function setOrders(array $orders): array
+    {
+        $payload = [
+            'Orders' => array_values($orders),
+        ];
+
+        $url = $this->baseUrl . '/Orders/Set';
+        $response = $this->http()->post($url, $payload);
+
+        if (! $response->successful()) {
+            Log::warning('TEN Orders/Set failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'payload' => $payload,
+            ]);
+
+            throw new RuntimeException("TEN Orders/Set failed with HTTP {$response->status()}");
+        }
+
+        $json = $response->json();
+
+        if ($json === null) {
+            return [
+                'raw' => null,
+                'http_status' => $response->status(),
+                'body' => $response->body(),
+            ];
+        }
+
+        return is_array($json) ? $json : ['raw' => $json];
+    }
+
+    /**
      * @param mixed $json
      * @param array<int, string> $preferredKeys
      * @return array<int, array<string, mixed>>
