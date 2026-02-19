@@ -282,4 +282,93 @@ class TenClient
 
         throw new RuntimeException('TEN Query/Get returned an unexpected response shape');
     }
+
+    /**
+     * POST /Query/Get
+     *
+     * Obtiene los últimos pedidos de venta desde TEN usando SQL (necesario para filtrar/ordenar correctamente).
+     *
+     * @param int $limit
+     * @return array<int, array<string, mixed>>
+     */
+    public function getLastsOrders(int $limit = 20): array
+    {
+        $empresaId = (int) config('services.ten.empresa_id', env('TEN_EMPRESA_ID'));
+
+        if ($empresaId <= 0) {
+            throw new RuntimeException('TEN_EMPRESA_ID no está configurado o es inválido.');
+        }
+
+        $limit = max(1, $limit);
+
+        // Nota: TOP requiere int. Ordenamos por IdNumero desc para traer los más recientes.
+        $query = "SELECT TOP {$limit} * FROM tblPedidosVenta WHERE IdEmpresa = {$empresaId} ORDER BY IdNumero DESC";
+
+        $payload = [
+            'query' => $query,
+        ];
+
+        $url = $this->baseUrl . '/Query/Get';
+        $response = $this->http()->post($url, $payload);
+
+        if (! $response->successful()) {
+            Log::warning('TEN Query/Get (getLastsOrders) failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'payload' => $payload,
+            ]);
+
+            throw new RuntimeException("TEN Query/Get failed with HTTP {$response->status()}");
+        }
+
+        return $this->extractListFromTenResponse($response->json(), ['Rows', 'rows', 'Data', 'data', 'Result', 'result']);
+    }
+
+    /**
+     * POST /Query/Get
+     *
+     * Obtiene un pedido por su identificador (IdNumero) desde TEN usando SQL.
+     *
+     * @param int $idNumero
+     * @return array<string, mixed>|null Devuelve el primer registro o null si no existe.
+     */
+    public function getOrderById(int $idNumero): ?array
+    {
+        $empresaId = (int) config('services.ten.empresa_id', env('TEN_EMPRESA_ID'));
+
+        if ($empresaId <= 0) {
+            throw new RuntimeException('TEN_EMPRESA_ID no está configurado o es inválido.');
+        }
+
+        if ($idNumero <= 0) {
+            throw new RuntimeException('El idNumero es inválido.');
+        }
+
+        // Traemos 1 por seguridad. OJO: el campo indicado por ti es IdNumero.
+        $query = "SELECT TOP 1 * FROM tblPedidosVenta WHERE IdEmpresa = {$empresaId} AND IdNumero = {$idNumero} ORDER BY IdNumero DESC";
+
+        $payload = [
+            'query' => $query,
+        ];
+
+        $url = $this->baseUrl . '/Query/Get';
+        $response = $this->http()->post($url, $payload);
+
+        if (! $response->successful()) {
+            Log::warning('TEN Query/Get (getOrderById) failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'payload' => $payload,
+                'idNumero' => $idNumero,
+            ]);
+
+            throw new RuntimeException("TEN Query/Get failed with HTTP {$response->status()}");
+        }
+
+        $rows = $this->extractListFromTenResponse($response->json(), ['Rows', 'rows', 'Data', 'data', 'Result', 'result']);
+
+        return $rows[0] ?? null;
+    }
 }
