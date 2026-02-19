@@ -137,6 +137,12 @@ class TestWCCustomersImport extends Command
         $skipCount = 0;
         $requeuedCount = 0;
 
+        // Guardamos wc_id de nuevos clientes (para enriquecer nif via orders)
+        $newWooIds = [];
+
+        // Y opcionalmente ids donde falta NIF
+        $missingNifWooIds = [];
+
         foreach ($rows as $r) {
             $id = (int) $r['woocommerce_id'];
             $newHash = (string) $r['ten_hash'];
@@ -144,6 +150,7 @@ class TestWCCustomersImport extends Command
             if (!isset($existing[$id])) {
                 $toUpsert[] = $r;
                 $insertCount++;
+                $newWooIds[] = $id;
                 continue;
             }
 
@@ -152,6 +159,8 @@ class TestWCCustomersImport extends Command
 
             if ($oldHash === $newHash) {
                 $skipCount++;
+                // Evitar query extra por cada uno: se hará una query en batch más abajo.
+                $missingNifWooIds[] = $id;
                 continue;
             }
 
@@ -172,6 +181,10 @@ class TestWCCustomersImport extends Command
 
         if (empty($toUpsert)) {
             $this->info('Nada que insertar/actualizar.');
+
+            // Enriquecimiento NIF automático: intentar para los clientes de esta página cuyo NIF esté vacío en DB
+            $this->autoEnrichNifFromOrders($client, $wooIds, $now, $marker);
+
             return self::SUCCESS;
         }
 
@@ -223,10 +236,139 @@ class TestWCCustomersImport extends Command
             $this->line("OK chunk {$chunkNum}/" . count($chunks) . " | {$done}/{$total}");
         }
 
-        $this->info("OK: import completado ({$done} escritos).");
+        // Enriquecimiento NIF automático
+        $this->autoEnrichNifFromOrders($client, $wooIds, $now, $marker);
+
+        $this->info("OK: import completado ({$done} escritos). ");
         Log::info($marker . ' success', ['written' => $done]);
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Enriquecimiento automático: para los woocommerce_id importados en esta pasada,
+     * si el cliente existe en DB con nif vacío, intenta obtenerlo del primer pedido
+     * (meta _billing_wooccm9) y persistirlo.
+     */
+    private function autoEnrichNifFromOrders(WooCommerceClient $client, array $wooIds, $now, string $marker): void
+    {
+        $candidateIds = array_values(array_unique(array_filter($wooIds, fn ($v) => (int) $v > 0)));
+        if (empty($candidateIds)) return;
+
+        $this->line('Enrich NIF: candidatos por woocommerce_id (página): ' . implode(',', array_slice($candidateIds, 0, 50)) . (count($candidateIds) > 50 ? '...' : ''));
+
+        $scopeIds = Cliente::query()
+            ->whereIn('woocommerce_id', $candidateIds)
+            ->where(function ($q) {
+                $q->whereNull('nif')->orWhere('nif', '')->orWhereRaw('TRIM(nif) = ""');
+            })
+            ->pluck('woocommerce_id')
+            ->map(fn ($v) => (int) $v)
+            ->all();
+
+        $scopeIds = array_values(array_unique(array_filter($scopeIds, fn ($v) => (int) $v > 0)));
+        if (empty($scopeIds)) {
+            $this->line('Enrich NIF: sin candidatos (todos tienen nif o no existen en DB)');
+            return;
+        }
+
+        $this->line('Enrich NIF: buscando _billing_wooccm9 en el primer pedido...');
+        $this->line('Enrich NIF: clientes con nif vacío en DB: ' . implode(',', $scopeIds));
+        $enriched = 0;
+        $notFound = 0;
+        $errors = 0;
+        $skippedAlreadyHasNif = 0;
+
+        foreach ($scopeIds as $wcCustomerId) {
+            try {
+                $this->line("Enrich NIF: consultando pedidos para customer={$wcCustomerId}");
+                $orders = $client->getPedidos(1, 1, [
+                    'customer' => $wcCustomerId,
+                    'orderby' => 'date',
+                    'order' => 'asc',
+                    'status' => 'any',
+                ]);
+
+                if (empty($orders) || !is_array($orders[0])) {
+                    $this->warn("Enrich NIF: sin pedidos (o respuesta vacía) para customer={$wcCustomerId}");
+                    $notFound++;
+                    continue;
+                }
+
+                $order = $orders[0];
+                $orderId = $order['id'] ?? null;
+                $this->line("Enrich NIF: primer pedido id=" . json_encode($orderId));
+                $meta = $order['meta_data'] ?? null;
+                if (!is_array($meta)) {
+                    $this->warn("Enrich NIF: pedido sin meta_data (id=" . json_encode($orderId) . ")");
+                    $notFound++;
+                    continue;
+                }
+
+                // Debug keys disponibles
+                $keys = [];
+                foreach ($meta as $m) {
+                    if (is_array($m) && isset($m['key'])) $keys[] = (string) $m['key'];
+                }
+                $this->line('Enrich NIF: meta_data keys=' . implode(',', array_slice($keys, 0, 30)) . (count($keys) > 30 ? '...' : ''));
+
+                $nifValue = null;
+                foreach ($meta as $m) {
+                    if (!is_array($m)) continue;
+                    $key = $m['key'] ?? null;
+                    if ($key === '_billing_wooccm9' || $key === 'billing_wooccm9') {
+                        $val = $m['value'] ?? null;
+                        if (is_string($val) && trim($val) !== '') {
+                            $nifValue = trim($val);
+                        }
+                        break;
+                    }
+                }
+
+                if ($nifValue === null) {
+                    $this->warn("Enrich NIF: meta _billing_wooccm9 no encontrado en pedido id=" . json_encode($orderId));
+                    $notFound++;
+                    continue;
+                }
+
+                $this->info("Enrich NIF: encontrado nif='{$nifValue}' en pedido id=" . json_encode($orderId));
+
+                // La tabla clientes no tiene columna id; la PK es woocommerce_id
+                $cliente = Cliente::query()->where('woocommerce_id', $wcCustomerId)->first(['woocommerce_id', 'nif']);
+                if (!$cliente) continue;
+                if (is_string($cliente->nif) && trim($cliente->nif) !== '') {
+                    $skippedAlreadyHasNif++;
+                    $this->line("Enrich NIF: skip porque ya tiene nif en DB (woocommerce_id={$cliente->woocommerce_id})");
+                    continue;
+                }
+
+                $affected = Cliente::query()->whereKey($cliente->woocommerce_id)->update([
+                    'nif' => $nifValue,
+                    'sync_status' => 'pending',
+                    'last_error' => null,
+                    'ten_last_fetched_at' => $now,
+                    'ten_hash' => WooCustomerMapper::hashFromAttributes(array_merge(
+                        $cliente->fresh()->toArray(),
+                        ['nif' => $nifValue]
+                    )),
+                    'updated_at' => now(),
+                ]);
+
+                $this->line('Enrich NIF: updated filas=' . (int) $affected . ' (woocommerce_id=' . $cliente->woocommerce_id . ')');
+
+                $enriched++;
+            } catch (Throwable $e) {
+                $errors++;
+                $this->error('Enrich NIF ERROR customer=' . $wcCustomerId . ' => ' . $e->getMessage());
+                Log::warning($marker . ' enrich nif failed', [
+                    'woocommerce_customer_id' => $wcCustomerId,
+                    'message' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        $this->info("Enrich NIF: ok={$enriched} | no encontrado={$notFound} | ya tenían nif={$skippedAlreadyHasNif} | errores={$errors}");
+        Log::info($marker . ' enrich nif done', compact('enriched','notFound','errors'));
     }
 
     private function dbColumns(): array
