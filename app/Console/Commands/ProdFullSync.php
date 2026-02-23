@@ -26,6 +26,8 @@ class ProdFullSync extends Command
     public function handle()
     {
         $this->syncCategorias();
+
+        $this->syncProducts();
     }
 
     private function syncCategorias()
@@ -43,5 +45,20 @@ class ProdFullSync extends Command
         } else {
             $this->error('Error al importar categorías. No se ejecuta la sincronización Woo.');
         }
+    }
+
+    private function syncProducts()
+    {
+        $this->info('Sincronizando productos (import y sync Woo)...');
+        //pasar el argumento --modified-after=all
+        $exitImport = $this->call('app:prod-import-productos', ['--modified-after' => 'all']);
+       //una vez finalizada la importacion, si o si ejecuto la sincronizacion, ya que reassigna categorias
+       $this->info('Finalizada la importación. Ahora sincronizando productos + validando categorias de producto');
+       $exitSync = $this->call('app:prod-sync-productos');
+       if ($exitSync === 0) {
+           $this->info('Productos Woo sincronizados correctamente.');
+       } else {
+           $this->error('Error al sincronizar productos Woo.'); 
+       }
     }
 }
