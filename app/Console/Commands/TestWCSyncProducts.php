@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Integrations\WooCommerceClient;
+use App\Models\Categoria;
 use App\Models\Producto;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
@@ -15,6 +16,7 @@ class TestWCSyncProducts extends Command
         {--limit=0 : Límite de productos a procesar (0 = sin límite)}
         {--dry-run : No llama a Woo ni escribe en DB}
         {--sync-stock : Actualiza stock en Woo para productos con woocommerce_id y stock>0}
+        {--force-categories : Fuerza la reasignación de categorías en Woo según categoria_ten_id aunque el producto esté synced}
     ';
 
     protected $description = 'Sync productos APP->WooCommerce (alta/enlace/actualización) usando ten_codigo como SKU';
@@ -29,6 +31,7 @@ class TestWCSyncProducts extends Command
         $limit = (int) $this->option('limit');
         $dryRun = (bool) $this->option('dry-run');
         $syncStock = (bool) $this->option('sync-stock');
+        $forceCategories = (bool) $this->option('force-categories');
 
         if (!in_array($only, ['pending', 'error', 'all'], true)) {
             $this->error('Valor inválido para --only. Usa: pending|error|all');
@@ -53,6 +56,13 @@ class TestWCSyncProducts extends Command
             $q->where(function ($sub) {
                 $sub->whereNull('ten_bloqueado')->orWhere('ten_bloqueado', false)->orWhere('ten_bloqueado', 0);
             });
+
+            // Si vamos a forzar categorías, solo tiene sentido para productos enlazados
+            if ($forceCategories) {
+                $q->whereNotNull('woocommerce_id')
+                    ->where('woocommerce_id', '!=', '')
+                    ->whereNotNull('categoria_ten_id');
+            }
         }
 
         // Necesitamos SKU (ten_codigo) para enlace/alta (si no -> error)
@@ -83,6 +93,50 @@ class TestWCSyncProducts extends Command
         foreach ($productos as $p) {
             /** @var Producto $p */
             $sku = trim((string) ($p->ten_codigo ?? ''));
+            Log::info('[WC_PRODUCTS_SYNC] INICIO producto', ['id' => $p->id, 'sku' => $sku, 'woo_id' => $p->woocommerce_id]);
+
+            // En modo force-categories, no necesitamos SKU y no tocamos catálogo excepto categories
+            if ($forceCategories) {
+                $wooId = (int) ($p->woocommerce_id ?? 0);
+                if ($wooId <= 0) {
+                    $skipped++;
+                    continue;
+                }
+
+                $payload = [];
+                $payload = $this->applyWooCategoriesToPayload($p, $payload);
+
+                // Si no se pudo resolver categoría, no tiene sentido actualizar
+                if (!array_key_exists('categories', $payload)) {
+                    $skipped++;
+                    $this->line("[{$p->id}] SKIP (sin mapping categoría) Woo #{$wooId}");
+                    continue;
+                }
+
+                if ($dryRun) {
+                    $this->line("[{$p->id}] UPDATE(dry) Woo #{$wooId} (force-categories)");
+                    $updated++;
+                    $synced++;
+                    continue;
+                }
+
+                try {
+                    Log::info('[WC_PRODUCTS_SYNC] Antes de updateProducto (force-categories)', ['id' => $p->id, 'woo_id' => $wooId]);
+                    $client->updateProducto($wooId, $payload);
+                    Log::info('[WC_PRODUCTS_SYNC] Después de updateProducto (force-categories)', ['id' => $p->id, 'woo_id' => $wooId]);
+                    $this->line("[{$p->id}] OK Woo #{$wooId} (categoría reasignada)");
+                    $updated++;
+                    $synced++;
+                } catch (Throwable $e) {
+                    $errors++;
+                    $err = $e->getMessage();
+                    $this->warn("[{$p->id}] ERROR force-categories Woo #{$wooId}: {$err}");
+                    Log::error($marker . ' force-categories failed', ['id' => $p->id, 'woo_id' => $wooId, 'error' => $err]);
+                }
+
+                Log::info('[WC_PRODUCTS_SYNC] FIN producto', ['id' => $p->id, 'sku' => $sku, 'woo_id' => $p->woocommerce_id]);
+                continue;
+            }
 
             // En modo sync-stock, el SKU no es relevante para el update (ya tenemos woocommerce_id)
             if (!$syncStock && $sku === '') {
@@ -102,6 +156,11 @@ class TestWCSyncProducts extends Command
             // Payload base (sirve tanto para alta como update)
             $payload = $this->toWooPayload($p, $syncStock);
 
+            // Paso extra: categorías (solo cuando NO es sync-stock)
+            if (!$syncStock) {
+                $payload = $this->applyWooCategoriesToPayload($p, $payload);
+            }
+
             try {
                 // 1) Si ya tiene woo id -> update
                 if (!empty($p->woocommerce_id)) {
@@ -111,6 +170,7 @@ class TestWCSyncProducts extends Command
                         $this->line("[{$p->id}] UPDATE Woo #{$wooId}" . ($syncStock ? " (stock={$p->stock})" : " sku={$sku}"));
                         $updated++;
                         $synced++;
+                        Log::info('[WC_PRODUCTS_SYNC] FIN producto', ['id' => $p->id, 'sku' => $sku, 'woo_id' => $p->woocommerce_id]);
                         continue;
                     }
 
@@ -124,7 +184,9 @@ class TestWCSyncProducts extends Command
                         }
                     }
 
+                    Log::info('[WC_PRODUCTS_SYNC] Antes de updateProducto', ['id' => $p->id, 'woo_id' => $wooId]);
                     $resp = $client->updateProducto($wooId, $payload);
+                    Log::info('[WC_PRODUCTS_SYNC] Después de updateProducto', ['id' => $p->id, 'woo_id' => $wooId]);
                     $wcId = (int)($resp['id'] ?? $wooId);
                     $wcSku = (string)($resp['sku'] ?? $sku);
 
@@ -139,6 +201,7 @@ class TestWCSyncProducts extends Command
 
                     $updated++;
                     $synced++;
+                    Log::info('[WC_PRODUCTS_SYNC] FIN producto', ['id' => $p->id, 'sku' => $sku, 'woo_id' => $p->woocommerce_id]);
                     continue;
                 }
 
@@ -152,6 +215,7 @@ class TestWCSyncProducts extends Command
                 if ($dryRun) {
                     $this->line("[{$p->id}] LINK/CREATE by sku={$sku}");
                     $synced++;
+                    Log::info('[WC_PRODUCTS_SYNC] FIN producto', ['id' => $p->id, 'sku' => $sku, 'woo_id' => $p->woocommerce_id]);
                     continue;
                 }
 
@@ -183,6 +247,7 @@ class TestWCSyncProducts extends Command
                     $linked++;
                     $updated++;
                     $synced++;
+                    Log::info('[WC_PRODUCTS_SYNC] FIN producto', ['id' => $p->id, 'sku' => $sku, 'woo_id' => $p->woocommerce_id]);
                     continue;
                 }
 
@@ -215,6 +280,8 @@ class TestWCSyncProducts extends Command
                     $p->save();
                 }
             }
+
+            Log::info('[WC_PRODUCTS_SYNC] FIN producto', ['id' => $p->id, 'sku' => $sku, 'woo_id' => $p->woocommerce_id]);
         }
 
         $this->info("OK fin. synced={$synced} | created={$created} | linked={$linked} | updated={$updated} | skipped={$skipped} | errors={$errors}");
@@ -274,5 +341,66 @@ class TestWCSyncProducts extends Command
 
         // Limpieza nulls para no mandar basura
         return array_filter($payload, fn($v) => $v !== null);
+    }
+
+    /**
+     * Si el producto tiene categoria_ten_id, intenta mapearla con la tabla categorias
+     * (categorias.ten_id_numero -> categorias.woocommerce_categoria_id) y añade
+     * la categoría al payload de Woo.
+     *
+     * @param array<string,mixed> $payload
+     * @return array<string,mixed>
+     */
+    private function applyWooCategoriesToPayload(Producto $p, array $payload): array
+    {
+        $tenCatId = $p->categoria_ten_id;
+
+        if ($tenCatId === null || $tenCatId === '') {
+            return $payload;
+        }
+
+        $tenCatIdInt = (int) $tenCatId;
+        if ($tenCatIdInt <= 0) {
+            return $payload;
+        }
+
+        $cat = Categoria::query()
+            ->where('ten_id_numero', $tenCatIdInt)
+            ->first(['ten_id_numero', 'woocommerce_categoria_id']);
+
+        if (!$cat) {
+            Log::warning('[WC_PRODUCTS_SYNC] Categoría TEN no encontrada en tabla categorias', [
+                'producto_id' => $p->id,
+                'producto_ten_id' => $p->ten_id,
+                'categoria_ten_id' => $tenCatIdInt,
+            ]);
+            return $payload;
+        }
+
+        $wooCatId = (int) ($cat->woocommerce_categoria_id ?? 0);
+        if ($wooCatId <= 0) {
+            Log::warning('[WC_PRODUCTS_SYNC] Categoría sin woocommerce_categoria_id (aún no enlazada en Woo)', [
+                'producto_id' => $p->id,
+                'producto_ten_id' => $p->ten_id,
+                'categoria_ten_id' => $tenCatIdInt,
+                'categoria_row_ten_id_numero' => $cat->ten_id_numero,
+            ]);
+            return $payload;
+        }
+
+        // Woo espera: categories: [ { id: 123 } ]
+        $payload['categories'] = [
+            ['id' => $wooCatId],
+        ];
+
+        Log::info('[WC_PRODUCTS_SYNC] Aplicando categoría al producto', [
+            'producto_id' => $p->id,
+            'producto_ten_id' => $p->ten_id,
+            'woo_product_id' => $p->woocommerce_id,
+            'categoria_ten_id' => $tenCatIdInt,
+            'woo_category_id' => $wooCatId,
+        ]);
+
+        return $payload;
     }
 }

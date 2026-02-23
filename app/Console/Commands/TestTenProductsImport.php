@@ -68,6 +68,8 @@ class TestTenProductsImport extends Command
         $rows = [];
         $skippedNoTenId = 0;
         $skippedBlocked = 0;
+        $skippedNoCategoria = 0;
+        $categoriaErrors = 0;
 
         $dbCols = $this->dbColumns();
         $dbColsFlip = array_flip($dbCols);
@@ -87,6 +89,24 @@ class TestTenProductsImport extends Command
             if (empty($attrs['ten_id'])) {
                 $skippedNoTenId++;
                 continue;
+            }
+
+            // --- Refresco de categoría desde TEN ---
+            // Intentamos traer la categoría por IdNumero (ten_id). Si no la encuentra, queda null.
+            try {
+                $catId = $client->getCategoryFromProduct((int) $attrs['ten_id']);
+                $attrs['categoria_ten_id'] = $catId;
+                if ($catId === null) {
+                    $skippedNoCategoria++;
+                }
+            } catch (Throwable $e) {
+                $categoriaErrors++;
+                // No abortamos el import por esto. Dejamos la categoría a null y seguimos.
+                $attrs['categoria_ten_id'] = null;
+                Log::warning($marker . ' categoria fetch failed', [
+                    'ten_id' => $attrs['ten_id'] ?? null,
+                    'message' => $e->getMessage(),
+                ]);
             }
 
             // TEN NO trae Woo => NULL SIEMPRE
@@ -111,8 +131,20 @@ class TestTenProductsImport extends Command
             $rows[] = array_intersect_key($attrs, $dbColsFlip);
         }
 
-        $this->line("Mapeados: " . count($rows) . " | sin ten_id: {$skippedNoTenId} | bloqueados: {$skippedBlocked}");
-        Log::info($marker . ' mapped', ['valid_rows' => count($rows), 'skipped_no_ten_id' => $skippedNoTenId, 'skipped_blocked' => $skippedBlocked]);
+        $this->line(
+            "Mapeados: " . count($rows)
+            . " | sin ten_id: {$skippedNoTenId}"
+            . " | bloqueados: {$skippedBlocked}"
+            . " | sin categoria: {$skippedNoCategoria}"
+            . " | errores categoria: {$categoriaErrors}"
+        );
+        Log::info($marker . ' mapped', [
+            'valid_rows' => count($rows),
+            'skipped_no_ten_id' => $skippedNoTenId,
+            'skipped_blocked' => $skippedBlocked,
+            'skipped_no_categoria' => $skippedNoCategoria,
+            'categoria_errors' => $categoriaErrors,
+        ]);
 
         if (count($rows) === 0) return self::SUCCESS;
 
@@ -286,6 +318,7 @@ class TestTenProductsImport extends Command
             'ten_peso',
             'ten_porc_impost',
             'ten_porc_recargo',
+            'categoria_ten_id',
             'ten_last_fetched_at',
             'ten_hash',
             'sync_status',

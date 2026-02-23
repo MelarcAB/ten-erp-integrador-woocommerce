@@ -242,47 +242,111 @@ class TestWCSyncCategories extends Command
                     // UPDATE directo si ya tenemos woo id en la fila
                     if (!empty($c->woocommerce_categoria_id)) {
                         $wooId = (int) $c->woocommerce_categoria_id;
-
-                        if ($dryRun) {
-                            $this->line("[TEN#{$tenId}] UPDATE(dry) WooCat#{$wooId} slug={$slug} parent={$wooParentId}");
-                            Log::info($marker . ' item update (dry-run)', compact('tenId', 'wooId', 'name', 'slug', 'wooParentId'));
+                        try {
+                            if ($dryRun) {
+                                $this->line("[TEN#{$tenId}] UPDATE(dry) WooCat#{$wooId} slug={$slug} parent={$wooParentId}");
+                                Log::info($marker . ' item update (dry-run)', compact('tenId', 'wooId', 'name', 'slug', 'wooParentId'));
+                                $updated++;
+                                $synced++;
+                                $wooIdByTenId[$tenId] = $wooId;
+                                $wooIdBySlug[$slug] = $wooId;
+                                $wooIdBySlugParent[$this->slugParentKey($slug, $wooParentId)] = $wooId;
+                                $progressThisPass++;
+                                continue;
+                            }
+                            $resp = $client->updateCategoriaProducto($wooId, $payload);
+                            $wcId = (int)($resp['id'] ?? $wooId);
+                            $wcParent = (int)($resp['parent'] ?? $wooParentId);
+                            $c->woocommerce_categoria_id = $wcId;
+                            $c->woocommerce_categoria_padre_id = $wcParent > 0 ? $wcParent : null;
+                            $c->sync_status = 'synced';
+                            $c->last_error = null;
+                            $c->save();
+                            $wooIdByTenId[$tenId] = $wcId;
+                            $wooIdBySlug[$slug] = $wcId;
+                            $wooIdBySlugParent[$this->slugParentKey($slug, $wcParent)] = $wcId;
+                            $this->line("[TEN#{$tenId}] UPDATE WooCat#{$wcId} slug={$slug} parent={$wcParent}");
+                            Log::info($marker . ' item update', [
+                                'ten_id' => $tenId,
+                                'woo_id' => $wcId,
+                                'name' => $name,
+                                'slug' => $slug,
+                                'woo_parent' => $wcParent,
+                                'pass' => $pass,
+                            ]);
                             $updated++;
                             $synced++;
-                            $wooIdByTenId[$tenId] = $wooId;
-                            $wooIdBySlug[$slug] = $wooId;
-                            $wooIdBySlugParent[$this->slugParentKey($slug, $wooParentId)] = $wooId;
                             $progressThisPass++;
                             continue;
+                        } catch (\Throwable $e) {
+                            $err = $e->getMessage();
+                            // duplicate_term_slug en UPDATE: enlaza por slug ignorando parent
+                            if (strpos($err, 'duplicate_term_slug') !== false) {
+                                $wooIdDup = $this->findWooCategoryIdBySlugAndParent(
+                                    client: $client,
+                                    slug: $slug,
+                                    expectedWooParentId: null,
+                                    wooIdBySlugParent: $wooIdBySlugParent,
+                                    marker: $marker,
+                                    context: ['ten_id' => $tenId, 'kind' => 'duplicate_slug_link_any_parent_update']
+                                );
+                                if ($wooIdDup > 0) {
+                                    $foundParent = null;
+                                    $found = $client->getCategoriasProductosBySlug($slug, 100, 1);
+                                    if (is_array($found) && count($found) > 0) {
+                                        foreach ($found as $row) {
+                                            if ((int)($row['id'] ?? 0) === $wooIdDup) {
+                                                $foundParent = (int)($row['parent'] ?? 0);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if ($foundParent !== null && $foundParent !== $wooParentId) {
+                                        Log::warning($marker . ' duplicate slug (update): parent no coincide', [
+                                            'ten_id' => $tenId,
+                                            'woo_id' => $wooIdDup,
+                                            'slug' => $slug,
+                                            'expected_parent' => $wooParentId,
+                                            'found_parent' => $foundParent,
+                                        ]);
+                                    }
+                                    $c->woocommerce_categoria_id = $wooIdDup;
+                                    $c->woocommerce_categoria_padre_id = $foundParent > 0 ? $foundParent : null;
+                                    $c->sync_status = 'synced';
+                                    $c->last_error = null;
+                                    $c->save();
+                                    $wooIdByTenId[$tenId] = $wooIdDup;
+                                    $wooIdBySlug[$slug] = $wooIdDup;
+                                    $wooIdBySlugParent[$this->slugParentKey($slug, $foundParent)] = $wooIdDup;
+                                    $this->line("[TEN#{$tenId}] LINK (por slug existente, parent ignorado, update) WooCat#{$wooIdDup} slug={$slug} parent={$foundParent}");
+                                    Log::info($marker . ' item link (duplicate slug, any parent, update)', [
+                                        'ten_id' => $tenId,
+                                        'woo_id' => $wooIdDup,
+                                        'name' => $name,
+                                        'slug' => $slug,
+                                        'woo_parent' => $foundParent,
+                                        'expected_parent' => $wooParentId,
+                                        'pass' => $pass,
+                                    ]);
+                                    $linked++;
+                                    $synced++;
+                                    $progressThisPass++;
+                                    continue;
+                                }
+                            }
+                            // Si no se pudo enlazar, NO marcar como error, solo loguear y continuar
+                            $this->warn("[TEN#{$tenId}] WARNING slug={$slug}: {$err}");
+                            Log::warning($marker . ' item warning (exception, update)', [
+                                'ten_id' => $tenId,
+                                'name' => $name,
+                                'slug' => $slug,
+                                'ten_parent_id' => $tenParentId,
+                                'woo_parent_id' => $wooParentId,
+                                'error' => $err,
+                                'pass' => $pass,
+                            ]);
+                            continue;
                         }
-
-                        $resp = $client->updateCategoriaProducto($wooId, $payload);
-                        $wcId = (int)($resp['id'] ?? $wooId);
-                        $wcParent = (int)($resp['parent'] ?? $wooParentId);
-
-                        $c->woocommerce_categoria_id = $wcId;
-                        $c->woocommerce_categoria_padre_id = $wcParent > 0 ? $wcParent : null;
-                        $c->sync_status = 'synced';
-                        $c->last_error = null;
-                        $c->save();
-
-                        $wooIdByTenId[$tenId] = $wcId;
-                        $wooIdBySlug[$slug] = $wcId;
-                        $wooIdBySlugParent[$this->slugParentKey($slug, $wcParent)] = $wcId;
-
-                        $this->line("[TEN#{$tenId}] UPDATE WooCat#{$wcId} slug={$slug} parent={$wcParent}");
-                        Log::info($marker . ' item update', [
-                            'ten_id' => $tenId,
-                            'woo_id' => $wcId,
-                            'name' => $name,
-                            'slug' => $slug,
-                            'woo_parent' => $wcParent,
-                            'pass' => $pass,
-                        ]);
-
-                        $updated++;
-                        $synced++;
-                        $progressThisPass++;
-                        continue;
                     }
 
                     if ($dryRun) {
@@ -344,37 +408,107 @@ class TestWCSyncCategories extends Command
                     }
 
                     // Crear
-                    $resp = $client->createCategoriaProducto($payload);
-                    $wcId = (int)($resp['id'] ?? 0);
-                    $wcParent = (int)($resp['parent'] ?? $wooParentId);
+                    try {
+                        $resp = $client->createCategoriaProducto($payload);
+                        $wcId = (int)($resp['id'] ?? 0);
+                        $wcParent = (int)($resp['parent'] ?? $wooParentId);
 
-                    if ($wcId <= 0) {
-                        throw new \RuntimeException('Respuesta Woo sin id al crear categoría');
+                        if ($wcId <= 0) {
+                            throw new \RuntimeException('Respuesta Woo sin id al crear categoría');
+                        }
+
+                        $c->woocommerce_categoria_id = $wcId;
+                        $c->woocommerce_categoria_padre_id = $wcParent > 0 ? $wcParent : null;
+                        $c->sync_status = 'synced';
+                        $c->last_error = null;
+                        $c->save();
+
+                        $wooIdByTenId[$tenId] = $wcId;
+                        $wooIdBySlug[$slug] = $wcId;
+                        $wooIdBySlugParent[$this->slugParentKey($slug, $wcParent)] = $wcId;
+
+                        $this->line("[TEN#{$tenId}] CREATE WooCat#{$wcId} slug={$slug} parent={$wcParent}");
+                        Log::info($marker . ' item create', [
+                            'ten_id' => $tenId,
+                            'woo_id' => $wcId,
+                            'name' => $name,
+                            'slug' => $slug,
+                            'woo_parent' => $wcParent,
+                            'pass' => $pass,
+                        ]);
+
+                        $created++;
+                        $synced++;
+                        $progressThisPass++;
+                    } catch (\Throwable $e) {
+                        $err = $e->getMessage();
+                        // Si es duplicate_term_slug, buscar la categoría por slug (ignorando parent) y enlazar la primera, nunca marcar como error
+                        if (strpos($err, 'duplicate_term_slug') !== false) {
+                            $wooId = $this->findWooCategoryIdBySlugAndParent(
+                                client: $client,
+                                slug: $slug,
+                                expectedWooParentId: null, // ignorar parent
+                                wooIdBySlugParent: $wooIdBySlugParent,
+                                marker: $marker,
+                                context: ['ten_id' => $tenId, 'kind' => 'duplicate_slug_link_any_parent']
+                            );
+                            if ($wooId > 0) {
+                                $foundParent = null;
+                                $found = $client->getCategoriasProductosBySlug($slug, 100, 1);
+                                if (is_array($found) && count($found) > 0) {
+                                    foreach ($found as $row) {
+                                        if ((int)($row['id'] ?? 0) === $wooId) {
+                                            $foundParent = (int)($row['parent'] ?? 0);
+                                            break;
+                                        }
+                                    }
+                                }
+                                if ($foundParent !== null && $foundParent !== $wooParentId) {
+                                    Log::warning($marker . ' duplicate slug: parent no coincide', [
+                                        'ten_id' => $tenId,
+                                        'woo_id' => $wooId,
+                                        'slug' => $slug,
+                                        'expected_parent' => $wooParentId,
+                                        'found_parent' => $foundParent,
+                                    ]);
+                                }
+                                $c->woocommerce_categoria_id = $wooId;
+                                $c->woocommerce_categoria_padre_id = $foundParent > 0 ? $foundParent : null;
+                                $c->sync_status = 'synced';
+                                $c->last_error = null;
+                                $c->save();
+                                $wooIdByTenId[$tenId] = $wooId;
+                                $wooIdBySlug[$slug] = $wooId;
+                                $wooIdBySlugParent[$this->slugParentKey($slug, $foundParent)] = $wooId;
+                                $this->line("[TEN#{$tenId}] LINK (por slug existente, parent ignorado) WooCat#{$wooId} slug={$slug} parent={$foundParent}");
+                                Log::info($marker . ' item link (duplicate slug, any parent)', [
+                                    'ten_id' => $tenId,
+                                    'woo_id' => $wooId,
+                                    'name' => $name,
+                                    'slug' => $slug,
+                                    'woo_parent' => $foundParent,
+                                    'expected_parent' => $wooParentId,
+                                    'pass' => $pass,
+                                ]);
+                                $linked++;
+                                $synced++;
+                                $progressThisPass++;
+                                continue;
+                            }
+                        }
+                        // Si no se pudo enlazar, NO marcar como error, solo loguear y continuar
+                        $this->warn("[TEN#{$tenId}] WARNING slug={$slug}: {$err}");
+                        Log::warning($marker . ' item warning (exception)', [
+                            'ten_id' => $tenId,
+                            'name' => $name,
+                            'slug' => $slug,
+                            'ten_parent_id' => $tenParentId,
+                            'woo_parent_id' => $wooParentId,
+                            'error' => $err,
+                            'pass' => $pass,
+                        ]);
+                        continue;
                     }
-
-                    $c->woocommerce_categoria_id = $wcId;
-                    $c->woocommerce_categoria_padre_id = $wcParent > 0 ? $wcParent : null;
-                    $c->sync_status = 'synced';
-                    $c->last_error = null;
-                    $c->save();
-
-                    $wooIdByTenId[$tenId] = $wcId;
-                    $wooIdBySlug[$slug] = $wcId;
-                    $wooIdBySlugParent[$this->slugParentKey($slug, $wcParent)] = $wcId;
-
-                    $this->line("[TEN#{$tenId}] CREATE WooCat#{$wcId} slug={$slug} parent={$wcParent}");
-                    Log::info($marker . ' item create', [
-                        'ten_id' => $tenId,
-                        'woo_id' => $wcId,
-                        'name' => $name,
-                        'slug' => $slug,
-                        'woo_parent' => $wcParent,
-                        'pass' => $pass,
-                    ]);
-
-                    $created++;
-                    $synced++;
-                    $progressThisPass++;
                 } catch (Throwable $e) {
                     $errors++;
                     $err = $e->getMessage();

@@ -410,4 +410,66 @@ class TenClient
 
         return $rows[0] ?? null;
     }
+
+    /**
+     * POST /Query/Get
+     *
+     * Devuelve la categoría (campo Categoria en tblProductos) de un producto en TEN.
+     * Si no existe, devuelve null.
+     */
+    public function getCategoryFromProduct(int $tenProductIdNumero): ?int
+    {
+        $empresaId = (int) config('services.ten.empresa_id', env('TEN_EMPRESA_ID'));
+
+        if ($empresaId <= 0) {
+            throw new RuntimeException('TEN_EMPRESA_ID no está configurado o es inválido.');
+        }
+
+        if ($tenProductIdNumero <= 0) {
+            throw new RuntimeException('El tenProductIdNumero es inválido.');
+        }
+
+        $query = "SELECT IdEmpresa, IdNumero, Codigo, Categoria FROM tblProductos where IdEmpresa={$empresaId} and IdNumero ={$tenProductIdNumero}";
+
+        $payload = [
+            'query' => $query,
+        ];
+
+        $url = $this->baseUrl . '/Query/Get';
+        $response = $this->http()->post($url, $payload);
+
+        if (! $response->successful()) {
+            Log::warning('TEN Query/Get (getCategoryFromProduct) failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'payload' => $payload,
+                'tenProductIdNumero' => $tenProductIdNumero,
+            ]);
+
+            throw new RuntimeException("TEN Query/Get failed with HTTP {$response->status()}");
+        }
+
+        $rows = $this->extractListFromTenResponse($response->json(), ['Rows', 'rows', 'Data', 'data', 'Result', 'result']);
+
+        if (empty($rows)) {
+            return null;
+        }
+
+        $categoria = $rows[0]['Categoria'] ?? null;
+        if ($categoria === null || $categoria === '') {
+            return null;
+        }
+
+        if (!is_numeric($categoria)) {
+            Log::warning('TEN Query/Get (getCategoryFromProduct) Categoria no numérica', [
+                'tenProductIdNumero' => $tenProductIdNumero,
+                'categoria' => $categoria,
+                'row' => $rows[0],
+            ]);
+            return null;
+        }
+
+        return (int) $categoria;
+    }
 }

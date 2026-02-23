@@ -101,9 +101,15 @@ class TestWCCustomersImport extends Command
             Log::warning($marker . ' dedup', ['before' => $before, 'after' => $after]);
         }
 
-        if ($dryRun) {
-            $this->warn('DRY RUN: no se escribirá en DB.');
-            $this->line('Ejemplo: ' . json_encode($rows[0], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        // Normaliza y filtra ids inválidos antes de tocar BD
+        $rows = array_values(array_filter($rows, function ($r) {
+            if (!is_array($r)) return false;
+            if (!isset($r['woocommerce_id'])) return false;
+            return (int) $r['woocommerce_id'] > 0;
+        }));
+
+        if (count($rows) === 0) {
+            $this->info('Nada que procesar: 0 filas válidas con woocommerce_id.');
             return self::SUCCESS;
         }
 
@@ -114,7 +120,7 @@ class TestWCCustomersImport extends Command
          * - Si cambió y estaba synced => pending (reencolar)
          * - Si NO cambió => skip total (no write)
          */
-        $wooIds = array_map(fn ($r) => (int) $r['woocommerce_id'], $rows);
+        $wooIds = array_values(array_unique(array_map(fn ($r) => (int) $r['woocommerce_id'], $rows)));
 
         $existing = [];
         foreach (array_chunk($wooIds, 1000) as $idsChunk) {
@@ -130,6 +136,17 @@ class TestWCCustomersImport extends Command
                 ];
             }
         }
+
+        // Validación previa a insert/update: si ya existe en BD y no queremos tocarlo,
+        // se decide aquí (descartar) comparando hash.
+        $rowsExisting = 0;
+        $rowsNew = 0;
+        foreach ($rows as $r) {
+            $id = (int) $r['woocommerce_id'];
+            if (isset($existing[$id])) $rowsExisting++; else $rowsNew++;
+        }
+        $this->line("Validación BD: existentes={$rowsExisting} | nuevos={$rowsNew}");
+        Log::info($marker . ' prevalidate', ['existing' => $rowsExisting, 'new' => $rowsNew]);
 
         $toUpsert = [];
         $insertCount = 0;
@@ -179,8 +196,21 @@ class TestWCCustomersImport extends Command
         $this->info("Insert: {$insertCount} | Update: {$updateCount} | Skip: {$skipCount} | Requeued(synced->pending): {$requeuedCount}");
         Log::info($marker . ' diff', compact('insertCount','updateCount','skipCount','requeuedCount'));
 
+        // IMPORTANTE: según lo pedido, si el woocommerce_id ya existe en BD se DESCARTA.
+        // Por lo tanto sólo insertamos nuevos y nunca actualizamos aquí.
+        if ($updateCount > 0) {
+            $this->warn("Descartados por existir en BD (woocommerce_id ya presente): {$updateCount}");
+            Log::warning($marker . ' discarded_existing', ['count' => $updateCount]);
+        }
+        $toUpsert = array_values(array_filter($toUpsert, fn ($r) => !isset($existing[(int)($r['woocommerce_id'] ?? 0)])));
+
+        if ($dryRun) {
+            $this->warn('DRY RUN: no se escribe en DB.');
+            return self::SUCCESS;
+        }
+
         if (empty($toUpsert)) {
-            $this->info('Nada que insertar/actualizar.');
+            $this->info('Nada que insertar (todos existían o fueron skip).');
 
             // Enriquecimiento NIF automático: intentar para los clientes de esta página cuyo NIF esté vacío en DB
             $this->autoEnrichNifFromOrders($client, $wooIds, $now, $marker);
@@ -188,7 +218,7 @@ class TestWCCustomersImport extends Command
             return self::SUCCESS;
         }
 
-        // Upsert por woocommerce_id (clave natural aquí)
+        // Insert-only: usamos upsert igualmente pero con $toUpsert filtrado a nuevos.
         $updateColumns = array_values(array_diff(array_keys($toUpsert[0]), ['woocommerce_id', 'created_at']));
 
         // Chunks para no petar placeholders

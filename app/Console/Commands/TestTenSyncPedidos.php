@@ -249,6 +249,29 @@ class TestTenSyncPedidos extends Command
             ];
         }
 
+        // Añadir línea de envío como producto especial si hay shipping_total > 0
+        if ((float)($pedido->shipping_total ?? 0) > 0) {
+            $lineas[] = [
+                'IdProducto' => '4635',
+                'CodigoProducto' => 'ENVIO',
+                'Descripcion' => 'Gastos de envío',
+                'Unidades' => '1',
+                'UnidadMedida' => '',
+                'Variante' => '',
+                'Precio' => (string)$pedido->shipping_total,
+                'PrecioDivisa' => (float)$pedido->shipping_total,
+                'PrecioPVP' => (string)$pedido->shipping_total,
+                'Dto1' => '0',
+                'Dto2' => '0',
+                'Dto3' => '0',
+                'Importe' => (string)$pedido->shipping_total,
+                'ImporteDivisa' => (string)$pedido->shipping_total,
+                'ImportePVP' => (string)$pedido->shipping_total,
+                'PorcIVA' => '0.000',
+                'PorcRecargo' => '0',
+            ];
+        }
+
         if (empty($lineas)) {
             throw new \RuntimeException('Pedido sin líneas.');
         }
