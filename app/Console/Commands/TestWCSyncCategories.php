@@ -373,6 +373,52 @@ class TestWCSyncCategories extends Command
                         context: ['ten_id' => $tenId, 'kind' => 'link_by_slug_parent']
                     );
 
+                    // Si no hay match por parent, buscar por slug ignorando parent y enlazar aunque no coincida el parent
+                    if ($wooId <= 0) {
+                        $wooId = $this->findWooCategoryIdBySlugAndParent(
+                            client: $client,
+                            slug: $slug,
+                            expectedWooParentId: null,
+                            wooIdBySlugParent: $wooIdBySlugParent,
+                            marker: $marker,
+                            context: ['ten_id' => $tenId, 'kind' => 'link_by_slug_any_parent']
+                        );
+                        if ($wooId > 0) {
+                            $foundParent = null;
+                            $found = $client->getCategoriasProductosBySlug($slug, 100, 1);
+                            if (is_array($found) && count($found) > 0) {
+                                foreach ($found as $row) {
+                                    if ((int)($row['id'] ?? 0) === $wooId) {
+                                        $foundParent = (int)($row['parent'] ?? 0);
+                                        break;
+                                    }
+                                }
+                            }
+                            $c->woocommerce_categoria_id = $wooId;
+                            $c->woocommerce_categoria_padre_id = $foundParent > 0 ? $foundParent : null;
+                            $c->sync_status = 'synced';
+                            $c->last_error = null;
+                            $c->save();
+                            $wooIdByTenId[$tenId] = $wooId;
+                            $wooIdBySlug[$slug] = $wooId;
+                            $wooIdBySlugParent[$this->slugParentKey($slug, $foundParent)] = $wooId;
+                            $this->line("[TEN#{$tenId}] LINK (por slug, parent ignorado) WooCat#{$wooId} slug={$slug} parent={$foundParent}");
+                            Log::info($marker . ' item link (slug, any parent)', [
+                                'ten_id' => $tenId,
+                                'woo_id' => $wooId,
+                                'name' => $name,
+                                'slug' => $slug,
+                                'woo_parent' => $foundParent,
+                                'expected_parent' => $wooParentId,
+                                'pass' => $pass,
+                            ]);
+                            $linked++;
+                            $synced++;
+                            $progressThisPass++;
+                            continue;
+                        }
+                    }
+
                     // Fallback muy conservador: si no hay match por parent, NO enlazamos "a ciegas".
                     // En ese caso, creamos una categoría nueva en el parent correcto.
                     if ($wooId > 0) {

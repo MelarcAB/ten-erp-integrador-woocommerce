@@ -30,12 +30,18 @@ class ProdFullSync extends Command
 
     private function syncCategorias()
     {
-        $this->info('Sincronizando categorías...');
-        $exitCode = $this->call('app:prod-import-categories');
-        if ($exitCode === 0) {
-            $this->info('Categorías sincronizadas correctamente.');
+        $this->info('Sincronizando categorías (import y sync Woo)...');
+        $exitImport = $this->call('app:prod-import-categories');
+        if ($exitImport === 0) {
+            $this->info('Importación de categorías completada. Ahora sincronizando con Woo...');
+            $exitSync = $this->call('app:prod-sync-categorias');
+            if ($exitSync === 0) {
+                $this->info('Categorías Woo sincronizadas correctamente.');
+            } else {
+                $this->error('Error al sincronizar categorías Woo.');
+            }
         } else {
-            $this->error('Error al sincronizar categorías.');
+            $this->error('Error al importar categorías. No se ejecuta la sincronización Woo.');
         }
     }
 }
