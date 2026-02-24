@@ -618,4 +618,44 @@ class WooCommerceClient
 
         throw new RuntimeException('WC product category PUT returned an unexpected response shape');
     }
+
+    /**
+     * @param array<int,array<string,mixed>> $updates
+     * @return array<string,mixed>
+     */
+    public function updateProductosBatch(array $updates): array
+    {
+        // Si tu client ya tiene un método genérico request(), úsalo.
+        // Aquí lo dejo “directo” para que lo adaptes a tu base.
+        $payload = ['update' => array_values($updates)];
+
+        $res = $this->request('post', '/products/batch', $payload);
+
+        return is_array($res) ? $res : [];
+    }
+
+    /**
+     * Ejemplo de request wrapper (ajústalo al tuyo).
+     * Debe llamar a /wp-json/wc/v3 + auth con ck/cs o basic, lo que uses.
+     *
+     * @return array<string,mixed>|array<int,mixed>|null
+     */
+    private function request(string $method, string $path, array $json = []): array|null
+    {
+        // EJEMPLO: si tu auth es por querystring consumer_key/secret
+        $base = rtrim(config('services.woocommerce.base_url'), '/'); // o env('WC_BASE_URL')
+        $url = $base . $path;
+
+        $ck = config('services.woocommerce.client_key');
+        $cs = config('services.woocommerce.client_secret');
+
+        $http = Http::timeout(60)->acceptJson();
+
+        $resp = $http->{$method}($url, $json + [
+            // si tu API usa query params, esto NO es así (depende de tu implementación)
+        ]);
+
+        // Si tu client actual ya lo hace bien, ignora este wrapper y pega el método batch al estilo del tuyo.
+        return $resp->successful() ? $resp->json() : null;
+    }
 }

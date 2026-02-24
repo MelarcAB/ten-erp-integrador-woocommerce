@@ -10,34 +10,23 @@ use Throwable;
 
 class ProdSyncStockProveedores extends Command
 {
-    /**
-     * The name and signature of the console command.
-     *
-     * @var string
-     */
     protected $signature = 'app:prod-sync-stock-proveedores
         {--dry-run : No actualiza Woo}
         {--limit=0 : Límite de filas a procesar (0 = sin límite)}
+        {--batch-size=100 : Tamaño del batch para /products/batch (recomendado 50-200)}
     ';
 
-    /**
-     * The console command description.
-     *
-     * @var string
-     */
-    protected $description = 'Descarga CSV de proveedores, actualiza stock/precio en Woo por SKU.';
+    protected $description = 'Descarga CSV de proveedores, actualiza stock/precio en Woo por SKU. (Optimizado con batch)';
 
-    /**
-     * Execute the console command.
-     */
     public function handle(): int
     {
-        $marker = '[STOCK_PROVEEDORES v1]';
+        $marker = '[STOCK_PROVEEDORES v2]';
         $this->line($marker . ' start');
 
         $url = 'https://tests.takeoffcomunicacion.es/stock_proveedor.csv';
         $dryRun = (bool) $this->option('dry-run');
         $limit = (int) $this->option('limit');
+        $batchSize = max(1, (int) $this->option('batch-size'));
 
         $tmp = tempnam(sys_get_temp_dir(), 'stock_prov_');
         if ($tmp === false) {
@@ -46,6 +35,7 @@ class ProdSyncStockProveedores extends Command
         }
 
         try {
+            // 1) Descargar CSV
             $this->info('Descargando CSV...');
             $response = Http::timeout(60)->get($url);
             if (!$response->successful()) {
@@ -59,6 +49,7 @@ class ProdSyncStockProveedores extends Command
                 return self::FAILURE;
             }
 
+            // 2) Leer headers
             $this->info('Leyendo headers...');
             $handle = fopen($tmp, 'r');
             if ($handle === false) {
@@ -74,116 +65,219 @@ class ProdSyncStockProveedores extends Command
                 return self::FAILURE;
             }
 
-            $this->line('Headers: ' . implode(' | ', $header));
-
             $map = $this->mapHeaders($header);
             if (!isset($map['MODELO'], $map['STOCK'], $map['PVPR'])) {
                 $this->error('Faltan columnas obligatorias: MODELO, STOCK, PVPR.');
                 return self::FAILURE;
             }
+            $hasEan = isset($map['EAN']);
 
             /** @var WooCommerceClient $woo */
             $woo = app(WooCommerceClient::class);
 
+            // 3) Cargar productos de Woo (sku + global_unique_id)
             $this->info('Cargando productos de WooCommerce...');
             $skuToId = [];
+            $eanToId = [];
+
             $page = 1;
             $perPage = 100;
+
             while (true) {
-                $products = $woo->getProductos($perPage, $page, ['_fields' => 'id,sku']);
+                try {
+                    $products = $woo->getProductos($perPage, $page, [
+                        '_fields' => 'id,sku,global_unique_id',
+                    ]);
+                } catch (Throwable $e) {
+                    $this->error('Error Woo al listar productos: ' . $e->getMessage());
+                    Log::error($marker . ' woo list failed', ['page' => $page, 'error' => $e->getMessage()]);
+                    return self::FAILURE;
+                }
+
                 if (empty($products)) break;
+
                 foreach ($products as $p) {
                     if (!is_array($p)) continue;
-                    $sku = trim((string)($p['sku'] ?? ''));
                     $id = (int)($p['id'] ?? 0);
-                    if ($sku === '' || $id <= 0) continue;
-                    $skuToId[$sku] = $id;
+                    if ($id <= 0) continue;
+
+                    $sku = trim((string)($p['sku'] ?? ''));
+                    if ($sku !== '') $skuToId[$sku] = $id;
+
+                    if ($hasEan) {
+                        $ean = trim((string)($p['global_unique_id'] ?? ''));
+                        if ($ean !== '') $eanToId[$ean] = $id;
+                    }
                 }
+
                 $page++;
             }
-            $this->info('Productos cargados: ' . count($skuToId));
 
-            $this->info('Procesando filas...');
+            $this->info('Productos cargados (SKU): ' . count($skuToId));
+            if ($hasEan) $this->info('EANs cargados (global_unique_id): ' . count($eanToId));
+
+            // 4) Procesar CSV y construir updates deduplicados
+            $this->info('Procesando filas (dedup + batch)...');
+
             $handle = fopen($tmp, 'r');
             if ($handle === false) {
                 $this->error('No se pudo reabrir el CSV.');
                 return self::FAILURE;
             }
+
             // skip header
             fgetcsv($handle, 0, ';');
 
             $processed = 0;
-            $updated = 0;
             $skipped = 0;
             $errors = 0;
-            $updatedSkus = [];
+
+            // Dedup: key => payload (último gana)
+            $updatesByKey = [];
 
             while (($row = fgetcsv($handle, 0, ';')) !== false) {
                 if ($limit > 0 && $processed >= $limit) break;
 
                 $sku = $this->getCol($row, $map['MODELO']);
-                if ($sku === '') {
+                $ean = $hasEan ? $this->getCol($row, $map['EAN']) : '';
+
+                $wooId = null;
+                $foundBy = null;
+
+                if ($sku !== '' && isset($skuToId[$sku])) {
+                    $wooId = (int)$skuToId[$sku];
+                    $foundBy = 'SKU';
+                } elseif ($ean !== '' && isset($eanToId[$ean])) {
+                    $wooId = (int)$eanToId[$ean];
+                    $foundBy = 'EAN';
+                }
+
+                if (!$wooId) {
                     $skipped++;
                     $processed++;
                     continue;
                 }
 
-                $stockRaw = $this->getCol($row, $map['STOCK']);
-                $pvprRaw = $this->getCol($row, $map['PVPR']);
+                $stock = $this->toInt($this->getCol($row, $map['STOCK']));
+                $pvpr  = $this->toDecimalString($this->getCol($row, $map['PVPR']));
 
-                $stock = $this->toInt($stockRaw);
-                $pvpr = $this->toDecimal($pvprRaw);
+                // Key para dedup (prefiere SKU si existe)
+                $key = $sku !== '' ? "sku:$sku" : "ean:$ean";
 
-                try {
-                    if (!isset($skuToId[$sku])) {
-                        $this->line("NO ENCONTRADO: SKU={$sku} -> Producto no encontrado en WooCommerce");
-                        $skipped++;
-                        $processed++;
-                        continue;
-                    }
-
-                    $wooId = (int) $skuToId[$sku];
-
-                    if ($dryRun) {
-                        $this->line("DRY RUN: SKU={$sku} Woo#{$wooId} stock={$stock} pvpr={$pvpr}");
-                        $updated++;
-                        $updatedSkus[] = $sku;
-                        $processed++;
-                        continue;
-                    }
-
-                    $woo->updateProducto($wooId, [
-                        'manage_stock' => true,
-                        'stock_quantity' => $stock,
-                        'regular_price' => $pvpr,
-                    ]);
-
-                    $this->line("UPDATED: SKU={$sku} Woo#{$wooId} stock={$stock} pvpr={$pvpr}");
-                    $updated++;
-                    $updatedSkus[] = $sku;
-                } catch (Throwable $e) {
-                    $errors++;
-                    $this->warn("Error SKU={$sku}: " . $e->getMessage());
-                    Log::warning($marker . ' update failed', [
-                        'sku' => $sku,
-                        'error' => $e->getMessage(),
-                    ]);
-                }
+                $updatesByKey[$key] = [
+                    'id' => $wooId,
+                    'manage_stock' => true,
+                    'stock_quantity' => $stock,
+                    'regular_price' => $pvpr,
+                    '_debug_found_by' => $foundBy,
+                    '_debug_sku' => $sku,
+                    '_debug_ean' => $ean,
+                ];
 
                 $processed++;
             }
 
             fclose($handle);
 
-            $this->info("OK: procesadas={$processed} | updated={$updated} | skipped={$skipped} | errors={$errors}");
-            if (!empty($updatedSkus)) {
-                $this->line('SKUs actualizados: ' . implode(', ', $updatedSkus));
-            } else {
-                $this->line('SKUs actualizados: ninguno');
+            $totalToUpdate = count($updatesByKey);
+            $this->info("Filas leídas={$processed} | dedup updates={$totalToUpdate} | skipped={$skipped}");
+
+            if ($dryRun) {
+                $this->warn('DRY RUN activo: no se enviarán updates a Woo.');
+                // muestra unas pocas
+                $i = 0;
+                foreach ($updatesByKey as $k => $u) {
+                    $this->line("DRY: {$u['_debug_found_by']} sku={$u['_debug_sku']} ean={$u['_debug_ean']} id={$u['id']} stock={$u['stock_quantity']} price={$u['regular_price']}");
+                    if (++$i >= 20) break;
+                }
+                return self::SUCCESS;
             }
-            return self::SUCCESS;
+
+            // 5) Enviar en batches
+            $this->info("Enviando batches a Woo (batch-size={$batchSize})...");
+            $updated = 0;
+
+            $batch = [];
+            $batchDebug = [];
+
+            foreach ($updatesByKey as $k => $u) {
+                $batch[] = [
+                    'id' => $u['id'],
+                    'manage_stock' => true,
+                    'stock_quantity' => $u['stock_quantity'],
+                    'regular_price' => $u['regular_price'],
+                ];
+                $batchDebug[] = $u;
+
+                if (count($batch) >= $batchSize) {
+                    [$ok, $fail] = $this->flushBatch($woo, $batch, $batchDebug, $marker);
+                    $updated += $ok;
+                    $errors += $fail;
+                    $batch = [];
+                    $batchDebug = [];
+                }
+            }
+
+            if (!empty($batch)) {
+                [$ok, $fail] = $this->flushBatch($woo, $batch, $batchDebug, $marker);
+                $updated += $ok;
+                $errors += $fail;
+            }
+
+            $this->info("OK: updates={$updated} | skipped={$skipped} | errors={$errors}");
+            return $errors > 0 ? self::FAILURE : self::SUCCESS;
+
         } finally {
             @unlink($tmp);
+        }
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $batch
+     * @param array<int,array<string,mixed>> $batchDebug
+     * @return array{0:int,1:int} ok, fail
+     */
+    private function flushBatch(WooCommerceClient $woo, array $batch, array $batchDebug, string $marker): array
+    {
+        try {
+            $res = $woo->updateProductosBatch($batch);
+
+            // Woo devuelve 'update' con objetos (algunos con 'error')
+            $ok = 0;
+            $fail = 0;
+
+            $items = is_array($res['update'] ?? null) ? $res['update'] : null;
+            if (!$items) {
+                // si no hay detalle, asumimos ok
+                return [count($batch), 0];
+            }
+
+            foreach ($items as $idx => $item) {
+                $dbg = $batchDebug[$idx] ?? null;
+
+                if (is_array($item) && isset($item['error'])) {
+                    $fail++;
+                    Log::warning($marker . ' batch item failed', [
+                        'id' => $dbg['id'] ?? null,
+                        'sku' => $dbg['_debug_sku'] ?? null,
+                        'ean' => $dbg['_debug_ean'] ?? null,
+                        'error' => $item['error'],
+                    ]);
+                } else {
+                    $ok++;
+                }
+            }
+
+            $this->line("Batch enviado: ok={$ok} fail={$fail}");
+            return [$ok, $fail];
+
+        } catch (Throwable $e) {
+            Log::warning($marker . ' batch request failed', [
+                'error' => $e->getMessage(),
+                'count' => count($batch),
+            ]);
+            $this->warn('Batch falló completo: ' . $e->getMessage());
+            return [0, count($batch)];
         }
     }
 
@@ -209,15 +303,75 @@ class ProdSyncStockProveedores extends Command
 
     private function toInt(string $val): int
     {
-        $val = str_replace(['.', ','], ['', '.'], $val);
-        return (int) round((float) $val);
+        $val = trim($val);
+        if ($val === '') return 0;
+
+        // Normaliza: "1.234,56" -> "1234.56" ; "1234.56" -> "1234.56" ; "1234" -> "1234"
+        $norm = $this->normalizeNumberString($val);
+        return (int) round((float) $norm);
     }
 
-    private function toDecimal(string $val): string
+    /**
+     * Devuelve string decimal con punto, apto para Woo regular_price
+     */
+    private function toDecimalString(string $val): string
     {
         $val = trim($val);
         if ($val === '') return '0';
-        $val = str_replace(['.', ','], ['', '.'], $val);
-        return (string) $val;
+
+        $norm = $this->normalizeNumberString($val);
+        // Woo espera string, mejor formatear sin notación científica
+        $f = (float)$norm;
+        // Evita "12" -> "12.000000" innecesario:
+        if (abs($f - round($f)) < 0.0000001) return (string)(int)round($f);
+
+        // recorta a 6 decimales y trim zeros
+        $s = number_format($f, 6, '.', '');
+        $s = rtrim(rtrim($s, '0'), '.');
+        return $s === '' ? '0' : $s;
+    }
+
+    /**
+     * Normaliza números con coma/punto:
+     * - "1.234,56" => "1234.56"
+     * - "1,234.56" => "1234.56"
+     * - "1234,56"  => "1234.56"
+     * - "1234.56"  => "1234.56"
+     * - "1234"     => "1234"
+     */
+    private function normalizeNumberString(string $raw): string
+    {
+        $s = trim($raw);
+        $s = str_replace(["\xC2\xA0", ' '], '', $s); // non-breaking space y espacios
+
+        $hasComma = str_contains($s, ',');
+        $hasDot = str_contains($s, '.');
+
+        if ($hasComma && $hasDot) {
+            // decide cuál es decimal mirando la última aparición
+            $lastComma = strrpos($s, ',');
+            $lastDot = strrpos($s, '.');
+
+            if ($lastComma !== false && $lastDot !== false && $lastComma > $lastDot) {
+                // coma decimal: quita puntos miles, cambia coma por punto
+                $s = str_replace('.', '', $s);
+                $s = str_replace(',', '.', $s);
+            } else {
+                // punto decimal: quita comas miles
+                $s = str_replace(',', '', $s);
+            }
+            return $s;
+        }
+
+        if ($hasComma) {
+            // asume coma decimal
+            $s = str_replace('.', '', $s); // por si vienen miles con punto
+            $s = str_replace(',', '.', $s);
+            return $s;
+        }
+
+        // solo punto o nada: asume punto decimal o entero
+        // por si viniera miles con coma ya lo quitamos arriba; aquí solo limpiamos comillas raras
+        return $s;
     }
 }

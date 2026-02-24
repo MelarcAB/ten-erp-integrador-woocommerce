@@ -2319,3 +2319,16 @@
         "table_name": "tmcAcumulados"
     }
 ]
+
+
+
+VAR.001 
+VAR.002
+
+{
+    "query": "SELECT TOP 10 * FROM tblProductos WHERE IdEmpresa = 20 and Descripcion LIKE 'VARIOS'"
+  }
+  {
+    "query": "SELECT TOP 10 * FROM tblProductos WHERE IdEmpresa = 20 and Codigo LIKE 'var.%'"
+  }
+  
