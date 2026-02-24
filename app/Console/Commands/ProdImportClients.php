@@ -207,6 +207,9 @@ class ProdImportClients extends Command
                 $totalWritten += $done;
             }
 
+            // --- NIF desde el primer pedido (meta _billing_wooccm9) ---
+            $this->autoEnrichNifFromOrders($client, $wooIds, $now, $marker);
+
             // --- Direcciones desde el primer pedido (si existe) ---
             $addressesWritten = $this->importAddressesFromFirstOrders($client, $wooIds, $now, $marker);
             $totalAddressesWritten += $addressesWritten;
@@ -363,6 +366,100 @@ class ProdImportClients extends Command
 
         $this->info("Direcciones: escritas {$done} (no_orders={$noOrders}, errors={$errors})");
         return $done;
+    }
+
+    /**
+     * Enriquecimiento NIF: para clientes con nif vacío, intenta obtenerlo del primer pedido
+     * (meta _billing_wooccm9) y persistirlo.
+     */
+    private function autoEnrichNifFromOrders(WooCommerceClient $client, array $wooIds, $now, string $marker): void
+    {
+        $candidateIds = array_values(array_unique(array_filter($wooIds, fn ($v) => (int) $v > 0)));
+        if (empty($candidateIds)) return;
+
+        $scopeIds = Cliente::query()
+            ->whereIn('woocommerce_id', $candidateIds)
+            ->where(function ($q) {
+                $q->whereNull('nif')->orWhere('nif', '')->orWhereRaw('TRIM(nif) = ""');
+            })
+            ->pluck('woocommerce_id')
+            ->map(fn ($v) => (int) $v)
+            ->all();
+
+        $scopeIds = array_values(array_unique(array_filter($scopeIds, fn ($v) => (int) $v > 0)));
+        if (empty($scopeIds)) return;
+
+        $enriched = 0;
+        $notFound = 0;
+        $errors = 0;
+
+        foreach ($scopeIds as $wcCustomerId) {
+            try {
+                $orders = $client->getPedidos(1, 1, [
+                    'customer' => $wcCustomerId,
+                    'orderby' => 'date',
+                    'order' => 'asc',
+                    'status' => 'any',
+                ]);
+
+                if (empty($orders) || !is_array($orders[0])) {
+                    $notFound++;
+                    continue;
+                }
+
+                $order = $orders[0];
+                $meta = $order['meta_data'] ?? null;
+                if (!is_array($meta)) {
+                    $notFound++;
+                    continue;
+                }
+
+                $nifValue = null;
+                foreach ($meta as $m) {
+                    if (!is_array($m)) continue;
+                    $key = $m['key'] ?? null;
+                    if ($key === '_billing_wooccm9' || $key === 'billing_wooccm9') {
+                        $val = $m['value'] ?? null;
+                        if (is_string($val) && trim($val) !== '') {
+                            $nifValue = trim($val);
+                        }
+                        break;
+                    }
+                }
+
+                if ($nifValue === null) {
+                    $notFound++;
+                    continue;
+                }
+
+                $cliente = Cliente::query()->where('woocommerce_id', $wcCustomerId)->first(['woocommerce_id', 'nif']);
+                if (!$cliente) continue;
+                if (is_string($cliente->nif) && trim($cliente->nif) !== '') continue;
+
+                $affected = Cliente::query()->whereKey($cliente->woocommerce_id)->update([
+                    'nif' => $nifValue,
+                    'sync_status' => 'pending',
+                    'last_error' => null,
+                    'ten_last_fetched_at' => $now,
+                    'ten_hash' => WooCustomerMapper::hashFromAttributes(array_merge(
+                        $cliente->fresh()->toArray(),
+                        ['nif' => $nifValue]
+                    )),
+                    'updated_at' => now(),
+                ]);
+
+                if ($affected) $enriched++;
+            } catch (Throwable $e) {
+                $errors++;
+                Log::warning($marker . ' enrich nif failed', [
+                    'woocommerce_customer_id' => $wcCustomerId,
+                    'message' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        $this->info("Enrich NIF: ok={$enriched} | no encontrado={$notFound} | errores={$errors}");
+        Log::info($marker . ' enrich nif done', compact('enriched','notFound','errors'));
     }
 
     /**

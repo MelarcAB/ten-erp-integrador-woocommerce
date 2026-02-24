@@ -62,10 +62,30 @@ class ProdFullSync extends Command
 
 
         $exitSync = $this->call('app:prod-sync-productos');
+
+
+        //ahora validar si hay imagenes que sincronizar con app:prod-sync-img
+        $this->info('Sincronizando imágenes de productos...');
+        $exitSyncImg = $this->call('app:prod-sync-img');
+        $this->info('Sincronización de imágenes de productos finalizada.');
+
+
         if ($exitSync === 0) {
             $this->info('Productos Woo sincronizados correctamente.');
         } else {
             $this->error('Error al sincronizar productos Woo.');
+        }
+
+        if ($exitSyncStocks === 0) {
+            $this->info('Stocks de productos sincronizados correctamente.');
+        } else {
+            $this->error('Error al sincronizar stocks de productos.');
+        }
+
+        if ($exitSyncImg === 0) {
+            $this->info('Imágenes de productos sincronizadas correctamente.');
+        } else {
+            $this->error('Error al sincronizar imágenes de productos.');
         }
     }
 }
