@@ -1,0 +1,2321 @@
+[
+    {
+        "table_name": "qryInventario_43"
+    },
+    {
+        "table_name": "tbcPresupuestos"
+    },
+    {
+        "table_name": "tblPartesContabilizar"
+    },
+    {
+        "table_name": "tbcTesoreriaPolizas"
+    },
+    {
+        "table_name": "tblClientes"
+    },
+    {
+        "table_name": "tblFichasTecnicasContadoresPrecios"
+    },
+    {
+        "table_name": "tmpInventario_34"
+    },
+    {
+        "table_name": "tblVariantesProductos"
+    },
+    {
+        "table_name": "tmpVendedoresComisiones"
+    },
+    {
+        "table_name": "tenUsersPermissions"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoAsignacionLotes"
+    },
+    {
+        "table_name": "tbcHistorico"
+    },
+    {
+        "table_name": "tblPartesPlanta"
+    },
+    {
+        "table_name": "qryInventario_25"
+    },
+    {
+        "table_name": "tmcSuasorCuentas"
+    },
+    {
+        "table_name": "tblSeriesNumeracion"
+    },
+    {
+        "table_name": "tblUsersLog"
+    },
+    {
+        "table_name": "qrcBalance_Balance_1_6"
+    },
+    {
+        "table_name": "tmpConciliacionBancariaSugerencias"
+    },
+    {
+        "table_name": "qryInventario_7"
+    },
+    {
+        "table_name": "qryInventario_34"
+    },
+    {
+        "table_name": "tmpProductosPlantillasFabricacionImprimir"
+    },
+    {
+        "table_name": "tblRecursosDepartamentos"
+    },
+    {
+        "table_name": "qrcBalance_Presupuestos_1_1"
+    },
+    {
+        "table_name": "qrcBalance_Balance_2_6"
+    },
+    {
+        "table_name": "tblAlquileresLineas"
+    },
+    {
+        "table_name": "qrcBalanceRecalculo_6"
+    },
+    {
+        "table_name": "tmpPedidosCompraCaptura"
+    },
+    {
+        "table_name": "tblAvisos"
+    },
+    {
+        "table_name": "qrcBalance_Presupuestos_2_1"
+    },
+    {
+        "table_name": "qrcBalance_Balance_6"
+    },
+    {
+        "table_name": "tblCRMCasosEtapas"
+    },
+    {
+        "table_name": "tblTPVCajaConceptos"
+    },
+    {
+        "table_name": "qrcBalanceRecalculo_22"
+    },
+    {
+        "table_name": "tenReportsCrystal"
+    },
+    {
+        "table_name": "tblCRMContactosEtapas"
+    },
+    {
+        "table_name": "qrcBalance_Presupuestos_1"
+    },
+    {
+        "table_name": "tenUsersGroupsAccess"
+    },
+    {
+        "table_name": "qryInventario_26"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoFamiliasPrevia"
+    },
+    {
+        "table_name": "tblCRMTareasOperaciones"
+    },
+    {
+        "table_name": "tblProyectosCapitulos"
+    },
+    {
+        "table_name": "tbcConceptos"
+    },
+    {
+        "table_name": "tenUsersGroupsModules"
+    },
+    {
+        "table_name": "tblCRMContactosEstados"
+    },
+    {
+        "table_name": "tmpInventarioAlmacenes_21"
+    },
+    {
+        "table_name": "tmpVendedoresComisionesDocumentos"
+    },
+    {
+        "table_name": "qrcBalanceCuadreIVA_21"
+    },
+    {
+        "table_name": "tblCRMContactos"
+    },
+    {
+        "table_name": "tblBancoPrecios"
+    },
+    {
+        "table_name": "tenNETScripts"
+    },
+    {
+        "table_name": "tblCRMCuentasContactos"
+    },
+    {
+        "table_name": "tblProduccionPlantaAsignacion"
+    },
+    {
+        "table_name": "tfgEstadisticasComprasMeses"
+    },
+    {
+        "table_name": "tblFichasTecnicasContadoresLecturas"
+    },
+    {
+        "table_name": "tblEcommerceDirecciones"
+    },
+    {
+        "table_name": "tmpPedidosVentaAsignacion"
+    },
+    {
+        "table_name": "tblReposicion"
+    },
+    {
+        "table_name": "tblPedidosVentaAsignacion"
+    },
+    {
+        "table_name": "tmpPreciosImportar"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoLineasHitos"
+    },
+    {
+        "table_name": "tbcPresupuestosLineas"
+    },
+    {
+        "table_name": "qrcBalance_Balance_1_26"
+    },
+    {
+        "table_name": "tblCRMAgenda"
+    },
+    {
+        "table_name": "tblTPVImpresoras"
+    },
+    {
+        "table_name": "tblMediosPago"
+    },
+    {
+        "table_name": "tbcOperacionesTerceros"
+    },
+    {
+        "table_name": "tblContratosTipos"
+    },
+    {
+        "table_name": "tblPresupuestosVentaLineas"
+    },
+    {
+        "table_name": "qrcBalance_Balance_2_26"
+    },
+    {
+        "table_name": "tblMovimientosNSerie"
+    },
+    {
+        "table_name": "qrcBalance_Balance_1_13"
+    },
+    {
+        "table_name": "tbcActivosFijosMotivosBaja"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_1_5"
+    },
+    {
+        "table_name": "tenReportsCrystalParameters"
+    },
+    {
+        "table_name": "tmpExpedicionesMaquilaEtiquetas"
+    },
+    {
+        "table_name": "tblTerminalesUltimosNumeros"
+    },
+    {
+        "table_name": "tblTextos"
+    },
+    {
+        "table_name": "tbcConversionNPGCPlantillas"
+    },
+    {
+        "table_name": "qrcBalance_Presupuestos_1_6"
+    },
+    {
+        "table_name": "tenUsersGroups"
+    },
+    {
+        "table_name": "qrcBalance_Balance_26"
+    },
+    {
+        "table_name": "tbcTesoreriaCategorias"
+    },
+    {
+        "table_name": "qrcBalance_Balance_2_13"
+    },
+    {
+        "table_name": "tbuProductosData"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_2_5"
+    },
+    {
+        "table_name": "tblBancoPreciosLineas"
+    },
+    {
+        "table_name": "tbcBancosCodigos"
+    },
+    {
+        "table_name": "tblProductosPlantillasFabricacionLineasPlantillas"
+    },
+    {
+        "table_name": "tblAuditFacturasVenta"
+    },
+    {
+        "table_name": "qrcBalance_Presupuestos_2_6"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_1_26"
+    },
+    {
+        "table_name": "qrcBalance_Balance_13"
+    },
+    {
+        "table_name": "tblCRMActividades"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_5"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoLineasFacturacion"
+    },
+    {
+        "table_name": "tenStatistics"
+    },
+    {
+        "table_name": "tblDirecciones"
+    },
+    {
+        "table_name": "tblCRMContactosEstadosLineas"
+    },
+    {
+        "table_name": "qrcBalance_Presupuestos_6"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_2_26"
+    },
+    {
+        "table_name": "tmpPartesLiquidacion"
+    },
+    {
+        "table_name": "tmpInventarioAlmacenes_22"
+    },
+    {
+        "table_name": "qrcIVAChequeo_8"
+    },
+    {
+        "table_name": "tblProductosFormatos"
+    },
+    {
+        "table_name": "tmcCarteraFusionar"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_26"
+    },
+    {
+        "table_name": "tblPartes"
+    },
+    {
+        "table_name": "dtproperties"
+    },
+    {
+        "table_name": "tblProduccionPlantaElaboracion"
+    },
+    {
+        "table_name": "qrcBalanceCuadreIVA_1"
+    },
+    {
+        "table_name": "tenUsers"
+    },
+    {
+        "table_name": "qryInventario_35"
+    },
+    {
+        "table_name": "tblProductosPromociones"
+    },
+    {
+        "table_name": "tbcBancos"
+    },
+    {
+        "table_name": "tmpSummary"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoActividades"
+    },
+    {
+        "table_name": "qrcBalanceDetalle"
+    },
+    {
+        "table_name": "tblProductosAlmacenes"
+    },
+    {
+        "table_name": "tblExpedicionesMaquila"
+    },
+    {
+        "table_name": "tblRecursosTareas"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoConsumos"
+    },
+    {
+        "table_name": "tblDireccionesEmail"
+    },
+    {
+        "table_name": "tblActividades"
+    },
+    {
+        "table_name": "tblProductosPlantillasFabricacionEspecificaciones"
+    },
+    {
+        "table_name": "tenArea"
+    },
+    {
+        "table_name": "tblReposicionLineas"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoEtapas"
+    },
+    {
+        "table_name": "tbcInformesValores"
+    },
+    {
+        "table_name": "tblAlquileresElementos"
+    },
+    {
+        "table_name": "tblOrdenesTrabajo"
+    },
+    {
+        "table_name": "tenDataSources"
+    },
+    {
+        "table_name": "tblRecursosMediosPago"
+    },
+    {
+        "table_name": "tblPartesCaptura"
+    },
+    {
+        "table_name": "tmpContratosRenovacion"
+    },
+    {
+        "table_name": "tenForms"
+    },
+    {
+        "table_name": "tblPedidosVenta"
+    },
+    {
+        "table_name": "tblUnidadesMedida"
+    },
+    {
+        "table_name": "tblDireccionesGiro"
+    },
+    {
+        "table_name": "tbcSIITipoFacturaEmitida"
+    },
+    {
+        "table_name": "tenItemsProperties"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_1_26"
+    },
+    {
+        "table_name": "tmpEstadisticasCompras"
+    },
+    {
+        "table_name": "tenInformesAreas"
+    },
+    {
+        "table_name": "tblTiposProducto"
+    },
+    {
+        "table_name": "tmcActivosInventario"
+    },
+    {
+        "table_name": "qrcBalance_Balance_1_1"
+    },
+    {
+        "table_name": "tbcConversionNPGCPlanContable"
+    },
+    {
+        "table_name": "tenItemsFormsProperties"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_2_26"
+    },
+    {
+        "table_name": "tblCRMCompetidores"
+    },
+    {
+        "table_name": "tblContratos"
+    },
+    {
+        "table_name": "qrcBalanceCierre_1"
+    },
+    {
+        "table_name": "tbcIVALiquidacion340"
+    },
+    {
+        "table_name": "qryInventario_8"
+    },
+    {
+        "table_name": "qrcBalance_Balance_2_1"
+    },
+    {
+        "table_name": "tbcSiiEnvios"
+    },
+    {
+        "table_name": "tenTablesEvents"
+    },
+    {
+        "table_name": "tenMenu"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_26"
+    },
+    {
+        "table_name": "tblCodigosPostales"
+    },
+    {
+        "table_name": "tblEcommercePedidos"
+    },
+    {
+        "table_name": "tblTPVTicketsBalanzas"
+    },
+    {
+        "table_name": "tmpPedidosVentaServirCompletos"
+    },
+    {
+        "table_name": "qrcBalance_Balance_1"
+    },
+    {
+        "table_name": "tmpSummarySeries"
+    },
+    {
+        "table_name": "tblProduccionPlantaPicking"
+    },
+    {
+        "table_name": "tenFormsActions"
+    },
+    {
+        "table_name": "tenQuerys"
+    },
+    {
+        "table_name": "tblZonas"
+    },
+    {
+        "table_name": "tmpPedidosCompraValidacionAsignar"
+    },
+    {
+        "table_name": "tenUsersCompanies"
+    },
+    {
+        "table_name": "tmpInventario_22"
+    },
+    {
+        "table_name": "tmpEstadisticasVentas"
+    },
+    {
+        "table_name": "tblDtosFra"
+    },
+    {
+        "table_name": "tmpActualizarPrecios"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_1_12"
+    },
+    {
+        "table_name": "tenFormsActionsBand"
+    },
+    {
+        "table_name": "tenTables"
+    },
+    {
+        "table_name": "tbcTesoreriaPrevisiones"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoFichasTecnicas"
+    },
+    {
+        "table_name": "tfgEstadisticasVentas"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_2_12"
+    },
+    {
+        "table_name": "tenItemsPropertiesUser"
+    },
+    {
+        "table_name": "tenVersion"
+    },
+    {
+        "table_name": "qrcBalanceCuadreIVA_28"
+    },
+    {
+        "table_name": "tmpInventario_21"
+    },
+    {
+        "table_name": "qryInventario_22"
+    },
+    {
+        "table_name": "tblOrdenestrabajoExpedientes"
+    },
+    {
+        "table_name": "qrcBalanceRecalculo_19"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_12"
+    },
+    {
+        "table_name": "tbcSIITipoFacturaRecibida"
+    },
+    {
+        "table_name": "tenItemsPropertiesExtender"
+    },
+    {
+        "table_name": "tenStoredProcedures"
+    },
+    {
+        "table_name": "tmcCarteraFusionarLineas"
+    },
+    {
+        "table_name": "tbcAsientos"
+    },
+    {
+        "table_name": "tenFiles"
+    },
+    {
+        "table_name": "tenItemsPropertiesExtenderCompany"
+    },
+    {
+        "table_name": "tenAreaC"
+    },
+    {
+        "table_name": "tblCRMDepartamentos"
+    },
+    {
+        "table_name": "tblProductosEscandallos"
+    },
+    {
+        "table_name": "qryInventario_21"
+    },
+    {
+        "table_name": "qryInventario_17"
+    },
+    {
+        "table_name": "tblSituacionesProducto"
+    },
+    {
+        "table_name": "tblDtosGrupos"
+    },
+    {
+        "table_name": "tenItemsPropertiesExtenderUser"
+    },
+    {
+        "table_name": "tenMenuC"
+    },
+    {
+        "table_name": "tblCRMOportunidadesCompetidores"
+    },
+    {
+        "table_name": "tbcCuentasContactos"
+    },
+    {
+        "table_name": "tmcOperacionesTercerosReport"
+    },
+    {
+        "table_name": "tmpPedidosVentaValidacion"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoEspecificaciones"
+    },
+    {
+        "table_name": "tmpResumenDiarioFacturas"
+    },
+    {
+        "table_name": "tenMenuBand"
+    },
+    {
+        "table_name": "tblProductosAsociados"
+    },
+    {
+        "table_name": "qryInventario_18"
+    },
+    {
+        "table_name": "tenMenuBandC"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoId"
+    },
+    {
+        "table_name": "tbcTesoreriaPrevisionesLineas"
+    },
+    {
+        "table_name": "tblFabricantes"
+    },
+    {
+        "table_name": "tenMenuBandGroup"
+    },
+    {
+        "table_name": "tblProductosCostes"
+    },
+    {
+        "table_name": "tblSecciones"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoLineasDescomposicion"
+    },
+    {
+        "table_name": "tbcActivosFijosCuotas"
+    },
+    {
+        "table_name": "tblDtosUnidades"
+    },
+    {
+        "table_name": "tmpSummaryValues"
+    },
+    {
+        "table_name": "tbcSIIClaveRegimenEspecialEmitida"
+    },
+    {
+        "table_name": "tenMenuBandGroupC"
+    },
+    {
+        "table_name": "tblAlbaranesInternosMotivos"
+    },
+    {
+        "table_name": "tblAlquileresElementosTarifas"
+    },
+    {
+        "table_name": "qrcBalanceRecalculo_1"
+    },
+    {
+        "table_name": "tbcConversionNPGCResultado"
+    },
+    {
+        "table_name": "TenStatisticsDefaultValues"
+    },
+    {
+        "table_name": "tblCRMCargos"
+    },
+    {
+        "table_name": "tblVendedoresCodigos"
+    },
+    {
+        "table_name": "qrcBalanceCuadreIVA_8"
+    },
+    {
+        "table_name": "tmcRemesasResumenRiesgo"
+    },
+    {
+        "table_name": "TenAppDefaultColumns"
+    },
+    {
+        "table_name": "tblEstados"
+    },
+    {
+        "table_name": "qrcBalance_Balance_1_12"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_1_21"
+    },
+    {
+        "table_name": "tmpFacturacion"
+    },
+    {
+        "table_name": "tenFilesFormulas"
+    },
+    {
+        "table_name": "tenFormsLines"
+    },
+    {
+        "table_name": "tblProductosCBarras"
+    },
+    {
+        "table_name": "qryInventario_31"
+    },
+    {
+        "table_name": "tbcConceptosContrapartidas"
+    },
+    {
+        "table_name": "tblRecursosPermisosAgenda"
+    },
+    {
+        "table_name": "tblPartesLineas"
+    },
+    {
+        "table_name": "qryInventario_15"
+    },
+    {
+        "table_name": "qrcBalance_Balance_2_12"
+    },
+    {
+        "table_name": "tblEmpresas"
+    },
+    {
+        "table_name": "tblReposicionesTendenciasProducto"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_2_21"
+    },
+    {
+        "table_name": "tmpProductoExtracto"
+    },
+    {
+        "table_name": "tmpTabletPCProductosOfertar"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoMargenDet"
+    },
+    {
+        "table_name": "tblCRMListasMarketing"
+    },
+    {
+        "table_name": "qrcBalance_Balance_12"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_21"
+    },
+    {
+        "table_name": "tbcSiiEnviosLineas"
+    },
+    {
+        "table_name": "tblVendedoresComisionesDocumentos"
+    },
+    {
+        "table_name": "tmpDocumentacionConsulta"
+    },
+    {
+        "table_name": "tbcSIIClaveRegimenEspecialRecibida"
+    },
+    {
+        "table_name": "tblExpediciones"
+    },
+    {
+        "table_name": "tblAlquileresAccesorios"
+    },
+    {
+        "table_name": "qrcBalanceRecalculo_28"
+    },
+    {
+        "table_name": "qryInventario_28"
+    },
+    {
+        "table_name": "qrcBalance_Legalia_1_19"
+    },
+    {
+        "table_name": "tfgProductosCostes"
+    },
+    {
+        "table_name": "tmpInventarioAlmacenes_12"
+    },
+    {
+        "table_name": "tbcFacturasImportacion"
+    },
+    {
+        "table_name": "tbcRemesasCobro"
+    },
+    {
+        "table_name": "qrcBalance_Legalia_2_19"
+    },
+    {
+        "table_name": "tblEspecificaciones"
+    },
+    {
+        "table_name": "TablasReferenciadas"
+    },
+    {
+        "table_name": "tblProduccionPlantaInventarios"
+    },
+    {
+        "table_name": "tmpReposicionesImporteProveedor"
+    },
+    {
+        "table_name": "qrcBalance_Legalia_19"
+    },
+    {
+        "table_name": "tbcCentrosDistribucion"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoNecesidadProduccion"
+    },
+    {
+        "table_name": "tblAuditAplicacion"
+    },
+    {
+        "table_name": "tblEmpresasParametros"
+    },
+    {
+        "table_name": "tblGruposDtosProveedores"
+    },
+    {
+        "table_name": "tmpSummaryPaginas"
+    },
+    {
+        "table_name": "tblDepartamentos"
+    },
+    {
+        "table_name": "tbcProgramasGrupos"
+    },
+    {
+        "table_name": "tblAlquileresElementosTarifasPrecios"
+    },
+    {
+        "table_name": "tmpPedidosVentaCaptura"
+    },
+    {
+        "table_name": "tblProveedores"
+    },
+    {
+        "table_name": "tblReposiciones"
+    },
+    {
+        "table_name": "tblEcommercePedidosLineas"
+    },
+    {
+        "table_name": "tmcOperacionesTercerosReportLineas"
+    },
+    {
+        "table_name": "tblOfertasCompra"
+    },
+    {
+        "table_name": "tmcRemesasDetalleRiesgo"
+    },
+    {
+        "table_name": "tblGruposContablesCompras"
+    },
+    {
+        "table_name": "tmpContratos"
+    },
+    {
+        "table_name": "tbcSIICausaExencion"
+    },
+    {
+        "table_name": "tblFichasTecnicasRevisiones"
+    },
+    {
+        "table_name": "tblEstadosProyectosHistorico"
+    },
+    {
+        "table_name": "qryInventario_5"
+    },
+    {
+        "table_name": "tmpMargenesTarifas"
+    },
+    {
+        "table_name": "tenUsersComponents"
+    },
+    {
+        "table_name": "tbcSiiEnviosBajas"
+    },
+    {
+        "table_name": "qrcIVAChequeo_5"
+    },
+    {
+        "table_name": "qrcBalance_Presupuestos_1_5"
+    },
+    {
+        "table_name": "tblCategoriasWeb"
+    },
+    {
+        "table_name": "tmpPedidosVentaAsignacionListado"
+    },
+    {
+        "table_name": "tblIntrastatCodigos"
+    },
+    {
+        "table_name": "tblDtosGruposCompras"
+    },
+    {
+        "table_name": "tbcUltimosNumeros"
+    },
+    {
+        "table_name": "tblCRMResultados"
+    },
+    {
+        "table_name": "tblIdiomas"
+    },
+    {
+        "table_name": "tbcConversionNPGCAsiento"
+    },
+    {
+        "table_name": "qrcBalance_Presupuestos_2_5"
+    },
+    {
+        "table_name": "tblPedidosVentaLineas"
+    },
+    {
+        "table_name": "tblMensajes"
+    },
+    {
+        "table_name": "tblProductosEspecificaciones"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoLineasCotizaciones"
+    },
+    {
+        "table_name": "tbcFacturasImportacionVentas"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoNecesidadesFabricacion"
+    },
+    {
+        "table_name": "tmpInventarioAlmacenes_41"
+    },
+    {
+        "table_name": "tblProductosClustersFabricacion"
+    },
+    {
+        "table_name": "qrcBalance_Presupuestos_5"
+    },
+    {
+        "table_name": "tblCRMListasMarketingLineas"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_1_28"
+    },
+    {
+        "table_name": "tbcSIIInmueblesSituacion"
+    },
+    {
+        "table_name": "tmpProductosDesviacionCostes"
+    },
+    {
+        "table_name": "tmpInventario_12"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_2_28"
+    },
+    {
+        "table_name": "tbcCentrosDistribucionLineas"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_1_8"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoComponentes"
+    },
+    {
+        "table_name": "tblCRMCasosEstados"
+    },
+    {
+        "table_name": "tmpAcumulados"
+    },
+    {
+        "table_name": "tbcTiposEfecto"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_28"
+    },
+    {
+        "table_name": "tblProduccionPlantaEtiquetasVenta"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoCertificaciones"
+    },
+    {
+        "table_name": "tmpReposicionesProductosAlternativos"
+    },
+    {
+        "table_name": "tblGruposDtosProductos"
+    },
+    {
+        "table_name": "tmpPrecios"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_2_8"
+    },
+    {
+        "table_name": "tblRecursos"
+    },
+    {
+        "table_name": "qryInventario_16"
+    },
+    {
+        "table_name": "qryInventario_12"
+    },
+    {
+        "table_name": "qrcBalance_Balance_1_28"
+    },
+    {
+        "table_name": "tblRecursosLineas"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_8"
+    },
+    {
+        "table_name": "tbcAsientosLineas"
+    },
+    {
+        "table_name": "qrcBalance_Balance_2_28"
+    },
+    {
+        "table_name": "tmpInventarioAlmacenes_36"
+    },
+    {
+        "table_name": "qrcBalance_Presupuestos_Entrada_1"
+    },
+    {
+        "table_name": "qrcBalance_Balance_1_8"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_1_1"
+    },
+    {
+        "table_name": "tblReposicionesLineas"
+    },
+    {
+        "table_name": "tblIntrastat"
+    },
+    {
+        "table_name": "qrcBalance_Balance_28"
+    },
+    {
+        "table_name": "tenUsersComponentsDeleted"
+    },
+    {
+        "table_name": "qrcBalance_Balance_2_8"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_2_1"
+    },
+    {
+        "table_name": "tbcTelefonos"
+    },
+    {
+        "table_name": "tblGruposDtosClientes"
+    },
+    {
+        "table_name": "tbcEstados"
+    },
+    {
+        "table_name": "qrcBalance_Balance_8"
+    },
+    {
+        "table_name": "tblEstadosProyectos"
+    },
+    {
+        "table_name": "tblProductosReferencias"
+    },
+    {
+        "table_name": "tblPedidosCompraLineas"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_1"
+    },
+    {
+        "table_name": "tblLotesEspecificacionesResultados"
+    },
+    {
+        "table_name": "tblCRMCasos"
+    },
+    {
+        "table_name": "tblGruposDtosProductosCompras"
+    },
+    {
+        "table_name": "tblFichasTecnicasRevisionesLineas"
+    },
+    {
+        "table_name": "tmpProductosPuntos"
+    },
+    {
+        "table_name": "tblProductosMinimosMaximos"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoLineas"
+    },
+    {
+        "table_name": "tblProduccionPlantaAgrupacion"
+    },
+    {
+        "table_name": "tblProductosClustersFabricacionLineas"
+    },
+    {
+        "table_name": "tblCRMAcciones"
+    },
+    {
+        "table_name": "tmpPDAPicking"
+    },
+    {
+        "table_name": "tblProductosTasas"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoReparto"
+    },
+    {
+        "table_name": "tmpPDAInventarios"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoResumenUnidadesCoste"
+    },
+    {
+        "table_name": "tblDtosFamiliasCategorias"
+    },
+    {
+        "table_name": "tblCYCAseguradoras"
+    },
+    {
+        "table_name": "tmpEstadisticasVentas_21"
+    },
+    {
+        "table_name": "qrcCarteraAntiguedad_1"
+    },
+    {
+        "table_name": "tenUsersSettingsModels"
+    },
+    {
+        "table_name": "tblCategoriasWebIdiomas"
+    },
+    {
+        "table_name": "qrcCarteraAntiguedad_12"
+    },
+    {
+        "table_name": "tblPortes"
+    },
+    {
+        "table_name": "tbcSeriesNumeracion"
+    },
+    {
+        "table_name": "tblProduccionPlantaEtiquetasPacking"
+    },
+    {
+        "table_name": "qrcBalanceCuadreIVA_12"
+    },
+    {
+        "table_name": "tblGruposContablesVentas"
+    },
+    {
+        "table_name": "tbcActivosFijosGrupos"
+    },
+    {
+        "table_name": "tmpInventario_41"
+    },
+    {
+        "table_name": "tblPedidosCompra"
+    },
+    {
+        "table_name": "tblCRMCampañasTareas"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajo"
+    },
+    {
+        "table_name": "tblProductosPlantillasFabricacion"
+    },
+    {
+        "table_name": "tblAlquileresLineasServicios"
+    },
+    {
+        "table_name": "tmpInventarioAlmacenes_33"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoCertificacionesLineas"
+    },
+    {
+        "table_name": "qrcBalanceCuadreIVA_13"
+    },
+    {
+        "table_name": "qryInventario_41"
+    },
+    {
+        "table_name": "tblMensajesAsuntos"
+    },
+    {
+        "table_name": "tenUsersQuerys"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_1_19"
+    },
+    {
+        "table_name": "tblCRMCasosEstadosLineas"
+    },
+    {
+        "table_name": "tblIntrastatLineas"
+    },
+    {
+        "table_name": "tbcIRPFPagosFraccionados"
+    },
+    {
+        "table_name": "tbcEfectos"
+    },
+    {
+        "table_name": "qrcBalanceRecalculo_5"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_2_19"
+    },
+    {
+        "table_name": "tblGruposContablesProveedores"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoEstadoFases"
+    },
+    {
+        "table_name": "tblContratosLineas"
+    },
+    {
+        "table_name": "qrcBalanceCuadreIVA_5"
+    },
+    {
+        "table_name": "tmpInventario_36"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_19"
+    },
+    {
+        "table_name": "tbcConversionNPGCOrigen"
+    },
+    {
+        "table_name": "tblCRMActividadesCambiosAgenda"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoSeguimientos"
+    },
+    {
+        "table_name": "qrcIVAChequeo_22"
+    },
+    {
+        "table_name": "tmpTPVDiarioCajaResumido"
+    },
+    {
+        "table_name": "tenComponents"
+    },
+    {
+        "table_name": "tmpPreciosModificar"
+    },
+    {
+        "table_name": "tenWorkbenchPages"
+    },
+    {
+        "table_name": "tblDocumentos"
+    },
+    {
+        "table_name": "qrcBalanceCierre_8"
+    },
+    {
+        "table_name": "qryInventario_36"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoCotizaciones"
+    },
+    {
+        "table_name": "tmpAsientosBorrador"
+    },
+    {
+        "table_name": "tblMotivosAnulacion"
+    },
+    {
+        "table_name": "tblCRMOrigenes"
+    },
+    {
+        "table_name": "tblPartidasCompra"
+    },
+    {
+        "table_name": "tblLotes"
+    },
+    {
+        "table_name": "tblEcommerceContactos"
+    },
+    {
+        "table_name": "qrcIVAChequeo_19"
+    },
+    {
+        "table_name": "tbcRemesasPago"
+    },
+    {
+        "table_name": "tblProduccionPlantaEtiquetasRecepcion"
+    },
+    {
+        "table_name": "tblProductosAlternativos"
+    },
+    {
+        "table_name": "tblTerminales"
+    },
+    {
+        "table_name": "tblEspecial"
+    },
+    {
+        "table_name": "tmpTPVDiarioCaja"
+    },
+    {
+        "table_name": "tblProductosTiposMaquinas"
+    },
+    {
+        "table_name": "tblEnviosDocumentosElectronicos"
+    },
+    {
+        "table_name": "tblAprovisionamientos"
+    },
+    {
+        "table_name": "tblProductosCategoriasWeb"
+    },
+    {
+        "table_name": "tmpAfluenciaVentas"
+    },
+    {
+        "table_name": "qrcCarteraAntiguedad_8"
+    },
+    {
+        "table_name": "tmpPedidosCompraAgrupar"
+    },
+    {
+        "table_name": "qrcBalanceRecalculo_21"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_1_13"
+    },
+    {
+        "table_name": "tbcIRPFPagosFraccionadosLineas"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoLineasDirecta"
+    },
+    {
+        "table_name": "tmpProductoUltimaCompra"
+    },
+    {
+        "table_name": "qrcBalance_Balance_1_5"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_2_13"
+    },
+    {
+        "table_name": "tenNotes"
+    },
+    {
+        "table_name": "tblSectores"
+    },
+    {
+        "table_name": "tblAlbaranesVenta"
+    },
+    {
+        "table_name": "tblGruposContablesProductos"
+    },
+    {
+        "table_name": "qrcBalance_Balance_2_5"
+    },
+    {
+        "table_name": "tmpAfluenciaCompras"
+    },
+    {
+        "table_name": "tblOfertasVenta"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_13"
+    },
+    {
+        "table_name": "tmpInventario_33"
+    },
+    {
+        "table_name": "qryInventario_1"
+    },
+    {
+        "table_name": "tmcOperacionesIntracomunitarias"
+    },
+    {
+        "table_name": "tblProductosSecciones"
+    },
+    {
+        "table_name": "qrcBalance_Balance_5"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_1_22"
+    },
+    {
+        "table_name": "tblProduccionPlantaEtiquetasProduccion"
+    },
+    {
+        "table_name": "tblProveedoresContactos"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoRendimientos"
+    },
+    {
+        "table_name": "tblCRMOportunidadesVendedores"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_2_22"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoOfertasCompra"
+    },
+    {
+        "table_name": "qryInventario_33"
+    },
+    {
+        "table_name": "tmpTPVDiarioCajaInforme"
+    },
+    {
+        "table_name": "tmpProductosCotizaciones"
+    },
+    {
+        "table_name": "tblDHLCodigosPostales"
+    },
+    {
+        "table_name": "tblVariantesDimensionesGrupos"
+    },
+    {
+        "table_name": "tblRecepcionMercancias"
+    },
+    {
+        "table_name": "tblOrdenesFabricacionCompras"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_22"
+    },
+    {
+        "table_name": "tbcRegistrosIVA"
+    },
+    {
+        "table_name": "tblFacturasClientes"
+    },
+    {
+        "table_name": "tblProductosReferenciasClientes"
+    },
+    {
+        "table_name": "qrcBalance_Presupuestos_Entrada_5"
+    },
+    {
+        "table_name": "tblWebDestacados"
+    },
+    {
+        "table_name": "tmcCarteraPrevision"
+    },
+    {
+        "table_name": "tbcSuasorAsientosDesbloqueados"
+    },
+    {
+        "table_name": "tmpProveedorUltimaCompra"
+    },
+    {
+        "table_name": "tfgEstadisticasCompras"
+    },
+    {
+        "table_name": "tbcFacturasImportacionCompras"
+    },
+    {
+        "table_name": "tmpAlbaranesCompraIncidencias"
+    },
+    {
+        "table_name": "qrcIVAChequeo_13"
+    },
+    {
+        "table_name": "tfgEstadisticasVentasMeses"
+    },
+    {
+        "table_name": "tblRutas"
+    },
+    {
+        "table_name": "qrcBalance_dbm_1_1"
+    },
+    {
+        "table_name": "qrcBalance_Legalia_1_12"
+    },
+    {
+        "table_name": "tblPartesLineasFacturacion"
+    },
+    {
+        "table_name": "qrcBalance_dbm_2_1"
+    },
+    {
+        "table_name": "tblProduccionPlantaParametros"
+    },
+    {
+        "table_name": "tblGruposContablesClientes"
+    },
+    {
+        "table_name": "qrcBalance_Legalia_2_12"
+    },
+    {
+        "table_name": "tblAprovisionamientosLineas"
+    },
+    {
+        "table_name": "tblProductos"
+    },
+    {
+        "table_name": "qrcBalance_dbm_1"
+    },
+    {
+        "table_name": "tmpProyectoCapitulos"
+    },
+    {
+        "table_name": "qrcBalance_Legalia_12"
+    },
+    {
+        "table_name": "tblPresupuestosVenta"
+    },
+    {
+        "table_name": "tblVariantesDimensiones"
+    },
+    {
+        "table_name": "qrcBalanceCuadreIVA_22"
+    },
+    {
+        "table_name": "tbcSuasorEnvios"
+    },
+    {
+        "table_name": "tblFases"
+    },
+    {
+        "table_name": "tmpEstadisticasVentas_22"
+    },
+    {
+        "table_name": "tblCNAE"
+    },
+    {
+        "table_name": "tmpAlbaranesVenta"
+    },
+    {
+        "table_name": "tblStockRegularizaciones"
+    },
+    {
+        "table_name": "tblOperacionesGrupos"
+    },
+    {
+        "table_name": "tmpFacturas"
+    },
+    {
+        "table_name": "tmpImportacionBC3Conceptos"
+    },
+    {
+        "table_name": "tblProductosReferenciasProveedores"
+    },
+    {
+        "table_name": "tmpInventarioAlmacenes_40"
+    },
+    {
+        "table_name": "tblCRMOportunidades"
+    },
+    {
+        "table_name": "tbcPaises"
+    },
+    {
+        "table_name": "tblGruposComisionesProductos"
+    },
+    {
+        "table_name": "tblGruposMargenesProductos"
+    },
+    {
+        "table_name": "tblTarifasVenta"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoPanelCompras"
+    },
+    {
+        "table_name": "tbcConversionNPGCImagenPGC"
+    },
+    {
+        "table_name": "tmpPDAConsumo"
+    },
+    {
+        "table_name": "tmpPedidosPendientesPorCliente"
+    },
+    {
+        "table_name": "tblAlquileres"
+    },
+    {
+        "table_name": "tmcCentrosDistribucion"
+    },
+    {
+        "table_name": "tmpPedidosVentaValidacionLotes"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoLineasSolicitud"
+    },
+    {
+        "table_name": "tbcInmueblesCatastro"
+    },
+    {
+        "table_name": "tblIntrastatCondicionesEntrega"
+    },
+    {
+        "table_name": "tbcIRPFPagosFraccionadosSocios"
+    },
+    {
+        "table_name": "tblWebDestacadosIdiomas"
+    },
+    {
+        "table_name": "tmcBalance"
+    },
+    {
+        "table_name": "qrcBalanceRecalculo_12"
+    },
+    {
+        "table_name": "tblVariantesDimensionesGruposLineas"
+    },
+    {
+        "table_name": "tblCRMOportunidadesMotivosRechazo"
+    },
+    {
+        "table_name": "tblRecepcionMercanciasLineas"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoOfertasCompraLineas"
+    },
+    {
+        "table_name": "tenReporting"
+    },
+    {
+        "table_name": "tbcInmuebles"
+    },
+    {
+        "table_name": "tblTerminalesImpresorasEtiquetas"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoReposiciones"
+    },
+    {
+        "table_name": "tblProductosPlantillasFabricacionLineas"
+    },
+    {
+        "table_name": "tblGruposComisionesClientes"
+    },
+    {
+        "table_name": "tbcBancosExtracto"
+    },
+    {
+        "table_name": "tblSubFases"
+    },
+    {
+        "table_name": "tblCheckListCodigos"
+    },
+    {
+        "table_name": "tblDevolucionesClientes"
+    },
+    {
+        "table_name": "qrcBalance_Balance_1_22"
+    },
+    {
+        "table_name": "tmpPreciosCambiarValores"
+    },
+    {
+        "table_name": "qryInventario_6"
+    },
+    {
+        "table_name": "tenFormulas"
+    },
+    {
+        "table_name": "qrcBalance_Balance_2_22"
+    },
+    {
+        "table_name": "qrcIVAChequeo_27"
+    },
+    {
+        "table_name": "tbcInformesLineas"
+    },
+    {
+        "table_name": "tblFormasPago"
+    },
+    {
+        "table_name": "tbcConversionNPGCImagenAsiento"
+    },
+    {
+        "table_name": "tblUltimosNumeros"
+    },
+    {
+        "table_name": "qrcBalance_Balance_22"
+    },
+    {
+        "table_name": "tblPackingList"
+    },
+    {
+        "table_name": "qryInventario_27"
+    },
+    {
+        "table_name": "tmpEstadisticasCompras_13"
+    },
+    {
+        "table_name": "tmpInventario_40"
+    },
+    {
+        "table_name": "tmcLibroMayorParametros"
+    },
+    {
+        "table_name": "tblOrdenesFabricacionComprasLineas"
+    },
+    {
+        "table_name": "qrcBalance_Balance_1_11"
+    },
+    {
+        "table_name": "tbcIRPFLiquidacion"
+    },
+    {
+        "table_name": "qrcIVAChequeo_21"
+    },
+    {
+        "table_name": "tblCRMCampañas"
+    },
+    {
+        "table_name": "qrcBalance_Presupuestos_1_8"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_1_19"
+    },
+    {
+        "table_name": "tblProductosDocumentos"
+    },
+    {
+        "table_name": "tblCRMActividadesMotivosAnulacion"
+    },
+    {
+        "table_name": "qrcBalance_Balance_2_11"
+    },
+    {
+        "table_name": "tmpTPVTicketsCambiarSerie"
+    },
+    {
+        "table_name": "tbcInformes"
+    },
+    {
+        "table_name": "tbcEntidadesComerciales"
+    },
+    {
+        "table_name": "tblFiles"
+    },
+    {
+        "table_name": "tmcCarteraChequear"
+    },
+    {
+        "table_name": "tenReports"
+    },
+    {
+        "table_name": "qryInventario_40"
+    },
+    {
+        "table_name": "tblTransportistas"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_2_19"
+    },
+    {
+        "table_name": "qrcBalance_Balance_11"
+    },
+    {
+        "table_name": "tblPackingListSSCC"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoReposicionesLineas"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoTiposCobertura"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoDisponibilidadReserva"
+    },
+    {
+        "table_name": "tenReportsProperties"
+    },
+    {
+        "table_name": "tmpSaldos"
+    },
+    {
+        "table_name": "qrcBalance_BalanceAnalitico_19"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoFamilias"
+    },
+    {
+        "table_name": "tblAlmacenesGrupos"
+    },
+    {
+        "table_name": "tblClientesVendedores"
+    },
+    {
+        "table_name": "tenWorkbenchItems"
+    },
+    {
+        "table_name": "tblCostesIndirectos"
+    },
+    {
+        "table_name": "qrcIVAChequeo_12"
+    },
+    {
+        "table_name": "tbcSaldos"
+    },
+    {
+        "table_name": "qrcCarteraAntiguedad_28"
+    },
+    {
+        "table_name": "tblTPVCaja"
+    },
+    {
+        "table_name": "tblAlbaranesCompra"
+    },
+    {
+        "table_name": "tblProductosPlantillasFabricacionCheckList"
+    },
+    {
+        "table_name": "tblTiposIVAPorcentajes"
+    },
+    {
+        "table_name": "tmpEstadisticasCompras_21"
+    },
+    {
+        "table_name": "tmcBancosExtractoVinculacion"
+    },
+    {
+        "table_name": "tmpOfertasCompraImportar"
+    },
+    {
+        "table_name": "tblEstadisticasVentas"
+    },
+    {
+        "table_name": "tblRecursosTareasPanel"
+    },
+    {
+        "table_name": "tmpMovimientos"
+    },
+    {
+        "table_name": "tbcIRPFLiquidacionLineas"
+    },
+    {
+        "table_name": "tblCRMRecursosVacaciones"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_1_12"
+    },
+    {
+        "table_name": "tenReportsImages"
+    },
+    {
+        "table_name": "tmpPedidosPendientesPorProducto"
+    },
+    {
+        "table_name": "tblCRMTipos"
+    },
+    {
+        "table_name": "tblStockRegularizacionesLineas"
+    },
+    {
+        "table_name": "tblReposicionesTendencias"
+    },
+    {
+        "table_name": "tblGruposContablesProductosSeries"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_2_12"
+    },
+    {
+        "table_name": "tblTiposIVA"
+    },
+    {
+        "table_name": "tblPedidosVentaRegistroFaltas"
+    },
+    {
+        "table_name": "qrcBalanceCierre_6"
+    },
+    {
+        "table_name": "tbcIVALiquidacion"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoPanelConsumos"
+    },
+    {
+        "table_name": "tblPackingListEnvasesEDI"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_12"
+    },
+    {
+        "table_name": "tblProductosCostesIndirectos"
+    },
+    {
+        "table_name": "tmcIVACuadreResumen"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoCostesYCompras"
+    },
+    {
+        "table_name": "tblAlquileresElementosCategorias"
+    },
+    {
+        "table_name": "tenAppSettings"
+    },
+    {
+        "table_name": "tmpEstadisticasVentasMeses"
+    },
+    {
+        "table_name": "tbcFacturasImportacionInversiones"
+    },
+    {
+        "table_name": "qryInventario_11"
+    },
+    {
+        "table_name": "tbcBancosConciliacion"
+    },
+    {
+        "table_name": "tmcCuentasExtractoVinculacion"
+    },
+    {
+        "table_name": "qrcCarteraAntiguedad_6"
+    },
+    {
+        "table_name": "tblFichasTecnicas"
+    },
+    {
+        "table_name": "tbcCentros"
+    },
+    {
+        "table_name": "qrcBalanceCuadreIVA_19"
+    },
+    {
+        "table_name": "tblEmpresasConfiguracionSiiVentas"
+    },
+    {
+        "table_name": "tbcMotivosImpagado"
+    },
+    {
+        "table_name": "tmcInformes"
+    },
+    {
+        "table_name": "tblProductosIdiomas"
+    },
+    {
+        "table_name": "tblProyectosGastos"
+    },
+    {
+        "table_name": "tblPackingListLineas"
+    },
+    {
+        "table_name": "tblDevolucionesProveedores"
+    },
+    {
+        "table_name": "tblProductosPlantillasFabricacionSubproductos"
+    },
+    {
+        "table_name": "tmpClientesNotas"
+    },
+    {
+        "table_name": "qryInventario_47"
+    },
+    {
+        "table_name": "tblVariantes"
+    },
+    {
+        "table_name": "tenReportsType"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoCheckList"
+    },
+    {
+        "table_name": "qrcBalanceCuadreIVA_6"
+    },
+    {
+        "table_name": "tblVendedoresComisiones"
+    },
+    {
+        "table_name": "tblClientesContactos"
+    },
+    {
+        "table_name": "tblAlbaranesInternos"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoDisponibilidadAcumulado"
+    },
+    {
+        "table_name": "tbcActivosFijos"
+    },
+    {
+        "table_name": "tblEmpresasCuentasBloqueadas"
+    },
+    {
+        "table_name": "tblAlmacenes"
+    },
+    {
+        "table_name": "tblTelefonos"
+    },
+    {
+        "table_name": "tmcBalanceAnalitico_12"
+    },
+    {
+        "table_name": "qryInventario_19"
+    },
+    {
+        "table_name": "tblFamilias"
+    },
+    {
+        "table_name": "tblNotificaciones"
+    },
+    {
+        "table_name": "tmpInventarioAlmacenes_13"
+    },
+    {
+        "table_name": "tblTPVCodigosBarras"
+    },
+    {
+        "table_name": "tmcSuasorAsientos"
+    },
+    {
+        "table_name": "tblWebPedidosVenta"
+    },
+    {
+        "table_name": "tblVendedores"
+    },
+    {
+        "table_name": "tblVendedoresComisionesProductos"
+    },
+    {
+        "table_name": "qrcBalanceRecalculo_8"
+    },
+    {
+        "table_name": "tblAlquileresElementosEntradas"
+    },
+    {
+        "table_name": "qrcBalanceRecalculo_13"
+    },
+    {
+        "table_name": "tblEcommerceClientes"
+    },
+    {
+        "table_name": "tmpOrdenesTrabajoDisponibilidad"
+    },
+    {
+        "table_name": "tmpPresupuestosVentaAgrupar"
+    },
+    {
+        "table_name": "tbcDivisasTiposCambio"
+    },
+    {
+        "table_name": "qrcBalance_Balance_1_19"
+    },
+    {
+        "table_name": "tblMovimientos"
+    },
+    {
+        "table_name": "tblMotivosFalta"
+    },
+    {
+        "table_name": "qrcBalanceRecalculo_17"
+    },
+    {
+        "table_name": "tblCRMOportunidadesEtapas"
+    },
+    {
+        "table_name": "tblTickets"
+    },
+    {
+        "table_name": "qrcBalance_Balance_2_19"
+    },
+    {
+        "table_name": "tbcConversionNPGCAjustes"
+    },
+    {
+        "table_name": "tmpAlquileresFacturacion"
+    },
+    {
+        "table_name": "tblEmpresasConfiguracionSiiCompras"
+    },
+    {
+        "table_name": "qrcBalance_Balance_19"
+    },
+    {
+        "table_name": "tblFacturasCompra"
+    },
+    {
+        "table_name": "qrcBalance_Balance_1_21"
+    },
+    {
+        "table_name": "tblAuditTrail"
+    },
+    {
+        "table_name": "tmcIVALiquidacion"
+    },
+    {
+        "table_name": "tmpCreditoComercial"
+    },
+    {
+        "table_name": "qrcBalance_Balance_2_21"
+    },
+    {
+        "table_name": "qrcBalanceRecalculo_25"
+    },
+    {
+        "table_name": "tmpInventarioAlmacenes_34"
+    },
+    {
+        "table_name": "tbcDivisas"
+    },
+    {
+        "table_name": "qrcBalance_Balance_21"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_1_6"
+    },
+    {
+        "table_name": "tblTarifas"
+    },
+    {
+        "table_name": "tblTipos"
+    },
+    {
+        "table_name": "qrcCarteraAntiguedad_5"
+    },
+    {
+        "table_name": "qryInventario_32"
+    },
+    {
+        "table_name": "tblVariantesCodigos"
+    },
+    {
+        "table_name": "tmpEstadisticasCompras_22"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_2_6"
+    },
+    {
+        "table_name": "tmpProductosDesviacionMargenes"
+    },
+    {
+        "table_name": "tblReportsCrystal"
+    },
+    {
+        "table_name": "qrcBalanceCierre_12"
+    },
+    {
+        "table_name": "tmpPedidosVentaNecesidades"
+    },
+    {
+        "table_name": "tblCanales"
+    },
+    {
+        "table_name": "qrcBalance_EstadosContables_6"
+    },
+    {
+        "table_name": "tblCRMTareas"
+    },
+    {
+        "table_name": "tmcCarteraReport"
+    },
+    {
+        "table_name": "tblContratosCheckList"
+    },
+    {
+        "table_name": "tblOperaciones"
+    },
+    {
+        "table_name": "tblOrdenesTrabajoSubProductos"
+    },
+    {
+        "table_name": "tenTablesUser"
+    },
+    {
+        "table_name": "tblNotificacionesPlantillas"
+    },
+    {
+        "table_name": "tmpInventario_13"
+    },
+    {
+        "table_name": "tbcDiarios"
+    },
+    {
+        "table_name": "tblPartesLiquidacion"
+    },
+    {
+        "table_name": "tblStockTraspasosLineas"
+    },
+    {
+        "table_name": "qrcBalance__1_0"
+    },
+    {
+        "table_name": "tmpContratosOrdenesTrabajo"
+    },
+    {
+        "table_name": "tbcProgramas"
+    },
+    {
+        "table_name": "tmpProductosRoturasStock"
+    },
+    {
+        "table_name": "tblAlquileresElementosSalidas"
+    },
+    {
+        "table_name": "tblPedidosCompraRegistroFaltas"
+    },
+    {
+        "table_name": "qrcBalance__2_0"
+    },
+    {
+        "table_name": "tenUsersSettings"
+    },
+    {
+        "table_name": "tblFlujosTrabajo"
+    },
+    {
+        "table_name": "tblTicketsLineas"
+    },
+    {
+        "table_name": "qrcBalance_Presupuestos_Entrada_8"
+    },
+    {
+        "table_name": "qryInventario_13"
+    },
+    {
+        "table_name": "tblProductosPlantillasFabricacionIdiomas"
+    },
+    {
+        "table_name": "tblTerminalesCategorias"
+    },
+    {
+        "table_name": "tblCategorias"
+    },
+    {
+        "table_name": "tmpEstadisticasVentas_40"
+    },
+    {
+        "table_name": "qryInventario_23"
+    },
+    {
+        "table_name": "tmcEstadosContables"
+    },
+    {
+        "table_name": "tmpFacturasResumidas"
+    },
+    {
+        "table_name": "qrcBalance__0"
+    },
+    {
+        "table_name": "tenAuditTrailConfig"
+    },
+    {
+        "table_name": "tblProyectos"
+    },
+    {
+        "table_name": "tenUsersCustomPermissions"
+    },
+    {
+        "table_name": "tblWebPedidosVentaLineas"
+    },
+    {
+        "table_name": "tmpTPVCaja"
+    },
+    {
+        "table_name": "tblReportsCrystalParameters"
+    },
+    {
+        "table_name": "tmpAlbaranesVentaTraspasar"
+    },
+    {
+        "table_name": "tbcCuentas"
+    },
+    {
+        "table_name": "tmpPedidosAsignacionCompras"
+    },
+    {
+        "table_name": "tblStockTraspasos"
+    },
+    {
+        "table_name": "qryInventario_14"
+    },
+    {
+        "table_name": "tblRecursosPresencia"
+    },
+    {
+        "table_name": "tmcAcumulados"
+    }
+]

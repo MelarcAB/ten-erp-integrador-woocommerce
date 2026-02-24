@@ -25,9 +25,18 @@ class ProdFullSync extends Command
      */
     public function handle()
     {
+        $start = microtime(true);
+
         $this->syncCategorias();
 
         $this->syncProducts();
+
+        $this->syncClientes();
+
+        $elapsedMs = (microtime(true) - $start) * 1000;
+        $timeToMinutes = $elapsedMs / 60000;
+        $this->info('Tiempo total: ' . number_format($timeToMinutes, 2, ',', '.') . ' minutos');
+       // $this->info('Tiempo total: ' . number_format($elapsedMs, 0, ',', '.') . ' ms');
     }
 
     private function syncCategorias()
@@ -86,6 +95,25 @@ class ProdFullSync extends Command
             $this->info('Imágenes de productos sincronizadas correctamente.');
         } else {
             $this->error('Error al sincronizar imágenes de productos.');
+        }
+    }
+
+    private function syncClientes()
+    {
+        //app:prod-import-clients
+        //app:prod-sync-clients
+        $this->info('Sincronizando clientes (import y sync Woo)...');
+        $exitImport = $this->call('app:prod-import-clients');
+        if ($exitImport === 0) {
+            $this->info('Importación de clientes completada. Ahora sincronizando con Woo...');
+            $exitSync = $this->call('app:prod-sync-clients');
+            if ($exitSync === 0) {
+                $this->info('Clientes Woo sincronizados correctamente.');
+            } else {
+                $this->error('Error al sincronizar clientes Woo.');
+            }
+        } else {
+            $this->error('Error al importar clientes. No se ejecuta la sincronización Woo.');
         }
     }
 }
