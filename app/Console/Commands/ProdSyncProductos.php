@@ -75,8 +75,14 @@ class ProdSyncProductos extends Command
                         $wooId = (int) $p->woocommerce_id;
                         $remote = $client->getProductoById($wooId);
                         $remoteDesc = is_array($remote) ? trim((string)($remote['description'] ?? '')) : '';
-                        if ($remoteDesc !== '') {
+                        $remoteShort = is_array($remote) ? trim((string)($remote['short_description'] ?? '')) : '';
+                        // Descripción larga
+                        if (mb_strlen($remoteDesc) > mb_strlen($payload['description'] ?? '')) {
                             unset($payload['description']);
+                        }
+                        // Descripción corta
+                        if (mb_strlen($remoteShort) > mb_strlen($payload['short_description'] ?? '')) {
+                            unset($payload['short_description']);
                         }
                         $resp = $client->updateProducto($wooId, $payload);
                         $wcId = (int)($resp['id'] ?? $wooId);
@@ -98,8 +104,12 @@ class ProdSyncProductos extends Command
                         $wcId = (int) $first['id'];
                         $wcSku = (string)($first['sku'] ?? $sku);
                         $remoteDesc = trim((string)($first['description'] ?? ''));
-                        if ($remoteDesc !== '') {
+                        $remoteShort = trim((string)($first['short_description'] ?? ''));
+                        if (mb_strlen($remoteDesc) > mb_strlen($payload['description'] ?? '')) {
                             unset($payload['description']);
+                        }
+                        if (mb_strlen($remoteShort) > mb_strlen($payload['short_description'] ?? '')) {
+                            unset($payload['short_description']);
                         }
                         $resp = $client->updateProducto($wcId, $payload);
                         $wcId = (int)($resp['id'] ?? $wcId);

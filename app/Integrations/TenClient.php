@@ -472,4 +472,27 @@ class TenClient
 
         return (int) $categoria;
     }
+
+
+
+    /**
+     * Obtener los stocks de /Stocks/Get/
+     * Sin parametros
+     */
+    function getStocks(){
+        $url = $this->baseUrl . '/Stocks/Get';
+        $response = $this->http()->post($url);
+
+        if (! $response->successful()) {
+            Log::warning('TEN Stocks/Get failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+
+            throw new RuntimeException("TEN Stocks/Get failed with HTTP {$response->status()}");
+        }
+
+        return $this->extractListFromTenResponse($response->json(), ['Stocks', 'stocks']);           
+    }
 }
