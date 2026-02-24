@@ -299,6 +299,51 @@ class WooCommerceClient
     }
 
     /**
+     * GET /products
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function getProductos(int $perPage = 100, int $page = 1, array $params = []): array
+    {
+        $perPage = max(1, min(100, $perPage));
+        $page    = max(1, $page);
+
+        $query = array_merge([
+            'per_page' => $perPage,
+            'page'     => $page,
+        ], $params);
+
+        $url = $this->baseUrl . '/products';
+
+        $response = $this->http()->get($url, $query);
+
+        if (! $response->successful()) {
+            Log::warning('WC products GET failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'query' => $query,
+            ]);
+
+            throw new RuntimeException("WC products GET failed with HTTP {$response->status()}");
+        }
+
+        $json = $response->json();
+
+        if (is_array($json) && array_is_list($json)) {
+            return $json;
+        }
+
+        Log::warning('WC products GET unexpected response shape', [
+            'url' => $url,
+            'query' => $query,
+            'json' => $json,
+        ]);
+
+        throw new RuntimeException('WC products GET returned an unexpected response shape');
+    }
+
+    /**
      * GET /products/{id}
      *
      * @return array<string, mixed>
