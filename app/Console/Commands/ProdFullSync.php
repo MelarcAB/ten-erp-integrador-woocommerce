@@ -27,11 +27,16 @@ class ProdFullSync extends Command
     {
         $start = microtime(true);
 
-        $this->syncCategorias();
+       // $this->syncCategorias();
 
-        $this->syncProducts();
+      //  $this->syncProducts();
 
         $this->syncClientes();
+
+      //  $this->syncStockByProveedor();
+
+            $this->syncPedidos();
+
 
         $elapsedMs = (microtime(true) - $start) * 1000;
         $timeToMinutes = $elapsedMs / 60000;
@@ -115,5 +120,41 @@ class ProdFullSync extends Command
         } else {
             $this->error('Error al importar clientes. No se ejecuta la sincronización Woo.');
         }
+    }
+
+    private function syncStockByProveedor(){
+        //php artisan app:prod-sync-stock-proveedores
+        $this->info('Sincronizando stock por proveedor...');
+        $exitSync = $this->call('app:prod-sync-stock-proveedores');
+        if ($exitSync === 0) {
+            $this->info('Stock por proveedor sincronizado correctamente.');
+        } else {
+            $this->error('Error al sincronizar stock por proveedor.');
+        }
+
+
+
+
+    }
+
+
+    private function syncPedidos(){
+        //app:prod-import-pedidos
+        //y app:prod-sync-pedidos
+
+        $this->info('Sincronizando pedidos (import y sync Woo)...');
+        $exitImport = $this->call('app:prod-import-pedidos');
+        if ($exitImport === 0) {
+            $this->info('Importación de pedidos completada. Ahora sincronizando con Woo...');
+            $exitSync = $this->call('app:prod-sync-pedidos');
+            if ($exitSync === 0) {
+                $this->info('Pedidos Woo sincronizados correctamente.');
+            } else {
+                $this->error('Error al sincronizar pedidos Woo.');
+            }
+        } else {
+            $this->error('Error al importar pedidos. No se ejecuta la sincronización Woo.');
+        }
+
     }
 }

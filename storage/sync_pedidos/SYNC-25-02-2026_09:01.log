@@ -1,0 +1,4 @@
+[2026-02-25 09:01:12] START sync
+[2026-02-25 09:01:12] ORDER woo_id=34889 lineas=3
+[2026-02-25 09:01:13] ORDER woo_id=34889 status=OK ten_id=41654
+[2026-02-25 09:01:13] END sync sent=1 skipped=0 errors=0

@@ -7,6 +7,7 @@ use App\Models\Cliente;
 use App\Models\PedidoLineas;
 use App\Models\Pedidos;
 use App\Models\Producto;
+use App\Integrations\WooCommerceClient;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -14,6 +15,7 @@ use Throwable;
 
 class ProdSyncPedidos extends Command
 {
+    private $syncLogHandle = null;
     /**
      * The name and signature of the console command.
      *
@@ -59,11 +61,15 @@ class ProdSyncPedidos extends Command
             $query->where('woocommerce_id', (int) $orderId);
         }
 
+        $this->syncLogHandle = $this->openSyncLog();
+        $this->writeSyncLog('START sync');
+
         $pedidos = $query->get();
         $this->info('Pedidos a procesar: ' . $pedidos->count());
 
         if ($pedidos->isEmpty()) {
             $this->info($marker . ' done (no pending)');
+            $this->writeSyncLog('END sync (no pending)');
             return self::SUCCESS;
         }
 
@@ -81,10 +87,27 @@ class ProdSyncPedidos extends Command
 
             try {
                 $payload = $this->mapPedidoToTenOrderPayload($pedido);
+                $this->writeSyncLog("ORDER woo_id={$wooOrderId} lineas=" . count($payload['Lineas'] ?? []));
+                $this->writeSyncLog('PAYLOAD ' . json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+                if (!empty($payload['Lineas']) && is_array($payload['Lineas'])) {
+                    foreach ($payload['Lineas'] as $idx => $linea) {
+                        if (!is_array($linea)) continue;
+                        $this->writeSyncLog(
+                            'LINEA ' . ($idx + 1) .
+                            ' id_producto=' . ($linea['IdProducto'] ?? '') .
+                            ' codigo=' . ($linea['CodigoProducto'] ?? '') .
+                            ' desc=' . ($linea['Descripcion'] ?? '') .
+                            ' unidades=' . ($linea['Unidades'] ?? '') .
+                            ' precio=' . ($linea['Precio'] ?? '') .
+                            ' importe=' . ($linea['Importe'] ?? '')
+                        );
+                    }
+                }
 
                 if ($dryRun) {
                     $this->line('DRY RUN order payload: ' . json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
                     $sent++;
+                    $this->writeSyncLog("ORDER woo_id={$wooOrderId} status=DRY_RUN");
                     continue;
                 }
 
@@ -113,6 +136,7 @@ class ProdSyncPedidos extends Command
                     $pedido->save();
 
                     $this->error("Pedido woo_id={$wooOrderId} -> TEN error: {$errMsg}");
+                    $this->writeSyncLog("ORDER woo_id={$wooOrderId} status=ERROR msg=" . $errMsg);
                     Log::warning($marker . ' TEN Orders/Set returned error', [
                         'pedido_woocommerce_id' => $wooOrderId,
                         'payload' => ['Orders' => [$payload]],
@@ -141,6 +165,7 @@ class ProdSyncPedidos extends Command
 
                 $sent++;
                 $this->info("OK pedido woo_id={$wooOrderId} -> ten_id={$tenId}");
+                $this->writeSyncLog("ORDER woo_id={$wooOrderId} status=OK ten_id={$tenId}");
             } catch (Throwable $e) {
                 $errors++;
                 $msg = $e->getMessage();
@@ -150,6 +175,7 @@ class ProdSyncPedidos extends Command
                 $pedido->save();
 
                 $this->error("Pedido woo_id={$wooOrderId} error: {$msg}");
+                $this->writeSyncLog("ORDER woo_id={$wooOrderId} status=EXCEPTION msg=" . $msg);
                 Log::error($marker . ' TEN Orders/Set failed', [
                     'pedido_woocommerce_id' => $wooOrderId,
                     'error' => $msg,
@@ -159,10 +185,38 @@ class ProdSyncPedidos extends Command
 
         $this->info("Resultado: sent={$sent} | skipped={$skipped} | errors={$errors}");
         Log::info($marker . ' done', compact('sent', 'skipped', 'errors'));
+        $this->writeSyncLog("END sync sent={$sent} skipped={$skipped} errors={$errors}");
 
         return $errors > 0 ? self::FAILURE : self::SUCCESS;
     }
 
+    public function __destruct()
+    {
+        if (is_resource($this->syncLogHandle)) {
+            fclose($this->syncLogHandle);
+            $this->syncLogHandle = null;
+        }
+    }
+
+    private function openSyncLog()
+    {
+        $dir = storage_path('sync_pedidos');
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0755, true);
+        }
+
+        $filename = 'SYNC-' . now()->format('d-m-Y_H:i') . '.log';
+        $path = $dir . DIRECTORY_SEPARATOR . $filename;
+
+        return @fopen($path, 'a');
+    }
+
+    private function writeSyncLog(string $line): void
+    {
+        if (!is_resource($this->syncLogHandle)) return;
+        $ts = now()->format('Y-m-d H:i:s');
+        @fwrite($this->syncLogHandle, '[' . $ts . '] ' . $line . PHP_EOL);
+    }
     /**
      * Map DB -> payload TEN /Orders/Set (solo creación).
      */
@@ -201,6 +255,9 @@ class ProdSyncPedidos extends Command
         $cobrado = '1';
 
         $lineas = [];
+        $auxTenId = (string) (env('TEN_PRODUCT_ID_AUXILIAR') ?? '');
+        /** @var WooCommerceClient $woo */
+        $woo = app(WooCommerceClient::class);
         foreach ($pedido->lineas as $linea) {
             if (!($linea instanceof PedidoLineas)) continue;
 
@@ -211,7 +268,9 @@ class ProdSyncPedidos extends Command
             }
 
             if (!$producto || empty($producto->ten_id)) {
-                throw new \RuntimeException('Línea sin producto con ten_id (wc_product_id=' . $wcProductId . ', sku=' . (string)($linea->sku ?? '') . ')');
+                if ($auxTenId === '') {
+                    throw new \RuntimeException('Pedido omitido: producto sin ten_id y TEN_PRODUCT_ID_AUXILIAR no configurado (wc_product_id=' . $wcProductId . ', sku=' . (string)($linea->sku ?? '') . ')');
+                }
             }
 
             $qty = (int) ($linea->quantity ?? 0);
@@ -220,10 +279,24 @@ class ProdSyncPedidos extends Command
             $precio = $linea->price !== null ? (string) $linea->price : '0';
             $importeLinea = $linea->total !== null ? (string) $linea->total : (string) ((float)$precio * $qty);
 
+            $useAux = (!$producto || empty($producto->ten_id));
+            $auxDescripcion = (string) ($linea->name ?? $linea->sku ?? 'Producto auxiliar');
+            if ($useAux && $wcProductId > 0) {
+                try {
+                    $wcProd = $woo->getProductoById($wcProductId);
+                    if (is_array($wcProd) && !empty($wcProd['name'])) {
+                        $auxDescripcion = (string) $wcProd['name'];
+                    }
+                } catch (\Throwable $e) {
+                    // silent fallback: usamos nombre de la línea
+                }
+            }
             $lineas[] = [
-                'IdProducto' => (string) $producto->ten_id,
-                'CodigoProducto' => (string) ($producto->ten_codigo ?? $linea->sku ?? ''),
-                'Descripcion' => (string) ($linea->name ?? $producto->ten_web_nombre ?? ''),
+                'IdProducto' => $useAux ? $auxTenId : (string) $producto->ten_id,
+                'CodigoProducto' => $useAux ? '-' : (string) ($producto->ten_codigo ?? $linea->sku ?? ''),
+                'Descripcion' => $useAux
+                    ? $auxDescripcion
+                    : (string) ($linea->name ?? $producto->ten_web_nombre ?? ''),
                 'Unidades' => (string) $qty,
                 'UnidadMedida' => '',
                 'Variante' => '',

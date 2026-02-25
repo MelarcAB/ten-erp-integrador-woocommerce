@@ -1,0 +1,6 @@
+[2026-02-25 09:12:27] START sync
+[2026-02-25 09:12:27] ORDER woo_id=34889 lineas=1
+[2026-02-25 09:12:27] PAYLOAD {"Codigo":"34889","Fecha":"2026-02-25 09:58:52","FechaEntrega":"2026-02-25 10:00:21","IdCliente":"93154","IdDireccionEnvio":"7362","IdDireccionFacturacion":"0","IdTarifa":"0","Importe":"298.630000000","ImporteDivisa":"298.630000000","ImportePVP":"298.630000000","ImportePortes":"12.000000000","FormaPago":"Transferencia ","Cobrado":"1","Observacion":"","Divisa":"EUR","Vendedor":"WEB","AditionalData":{},"Lineas":[{"IdProducto":"4635","CodigoProducto":"ENVIO","Descripcion":"Gastos de envío","Unidades":"1","UnidadMedida":"","Variante":"","Precio":"12","PrecioDivisa":12,"PrecioPVP":"12","Dto1":"0","Dto2":"0","Dto3":"0","Importe":"12","ImporteDivisa":"12","ImportePVP":"12","PorcIVA":"0.000","PorcRecargo":"0"}]}
+[2026-02-25 09:12:27] LINEA 1 id_producto=4635 codigo=ENVIO desc=Gastos de envío unidades=1 precio=12 importe=12
+[2026-02-25 09:12:27] ORDER woo_id=34889 status=OK ten_id=41655
+[2026-02-25 09:12:27] END sync sent=1 skipped=0 errors=0

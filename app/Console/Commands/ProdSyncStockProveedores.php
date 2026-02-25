@@ -18,6 +18,8 @@ class ProdSyncStockProveedores extends Command
 
     protected $description = 'Descarga CSV de proveedores, actualiza stock/precio en Woo por SKU. (Optimizado con batch)';
 
+    private $providerLogHandle = null;
+
     public function handle(): int
     {
         $marker = '[STOCK_PROVEEDORES v2]';
@@ -35,6 +37,9 @@ class ProdSyncStockProveedores extends Command
         }
 
         try {
+            $this->providerLogHandle = $this->openProviderLog();
+            $this->writeProviderLog('START sync');
+
             // 1) Descargar CSV
             $this->info('Descargando CSV...');
             $response = Http::timeout(60)->get($url);
@@ -190,6 +195,7 @@ class ProdSyncStockProveedores extends Command
                     $this->line("DRY: {$u['_debug_found_by']} sku={$u['_debug_sku']} ean={$u['_debug_ean']} id={$u['id']} stock={$u['stock_quantity']} price={$u['regular_price']}");
                     if (++$i >= 20) break;
                 }
+                $this->writeProviderLog("END sync (dry-run) processed={$processed} updates={$totalToUpdate} skipped={$skipped} errors={$errors}");
                 return self::SUCCESS;
             }
 
@@ -225,9 +231,14 @@ class ProdSyncStockProveedores extends Command
             }
 
             $this->info("OK: updates={$updated} | skipped={$skipped} | errors={$errors}");
+            $this->writeProviderLog("END sync processed={$processed} updated={$updated} skipped={$skipped} errors={$errors}");
             return $errors > 0 ? self::FAILURE : self::SUCCESS;
 
         } finally {
+            if (is_resource($this->providerLogHandle)) {
+                fclose($this->providerLogHandle);
+                $this->providerLogHandle = null;
+            }
             @unlink($tmp);
         }
     }
@@ -248,7 +259,11 @@ class ProdSyncStockProveedores extends Command
 
             $items = is_array($res['update'] ?? null) ? $res['update'] : null;
             if (!$items) {
-                // si no hay detalle, asumimos ok
+                foreach ($batchDebug as $dbg) {
+                    $this->writeProviderLog(
+                        "UPDATED sku={$dbg['_debug_sku']} ean={$dbg['_debug_ean']} woo_id={$dbg['id']} stock={$dbg['stock_quantity']} pvpr={$dbg['regular_price']}"
+                    );
+                }
                 return [count($batch), 0];
             }
 
@@ -265,6 +280,11 @@ class ProdSyncStockProveedores extends Command
                     ]);
                 } else {
                     $ok++;
+                    if (is_array($dbg)) {
+                        $this->writeProviderLog(
+                            "UPDATED sku={$dbg['_debug_sku']} ean={$dbg['_debug_ean']} woo_id={$dbg['id']} stock={$dbg['stock_quantity']} pvpr={$dbg['regular_price']}"
+                        );
+                    }
                 }
             }
 
@@ -373,5 +393,25 @@ class ProdSyncStockProveedores extends Command
         // solo punto o nada: asume punto decimal o entero
         // por si viniera miles con coma ya lo quitamos arriba; aquí solo limpiamos comillas raras
         return $s;
+    }
+
+    private function openProviderLog()
+    {
+        $dir = storage_path('updates-from-provider');
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0755, true);
+        }
+
+        $filename = 'SYNC-' . now()->format('d-m-Y H:i') . '.log';
+        $path = $dir . DIRECTORY_SEPARATOR . $filename;
+
+        return @fopen($path, 'a');
+    }
+
+    private function writeProviderLog(string $line): void
+    {
+        if (!is_resource($this->providerLogHandle)) return;
+        $ts = now()->format('Y-m-d H:i:s');
+        @fwrite($this->providerLogHandle, '[' . $ts . '] ' . $line . PHP_EOL);
     }
 }
