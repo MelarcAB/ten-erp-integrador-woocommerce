@@ -15,7 +15,7 @@ class ProdSyncCategorias extends Command
      *
      * @var string
      */
-    protected $signature = 'app:prod-sync-categorias';
+    protected $signature = 'app:prod-sync-categorias {--no_create : No crear nuevas categorías en WooCommerce}';
 
     /**
      * The console command description.
@@ -32,6 +32,8 @@ class ProdSyncCategorias extends Command
         $marker = '[PROD_SYNC_CATEGORIAS v2]';
         $this->line($marker . ' start');
         Log::info($marker . ' start');
+        $noCreate = (bool) $this->option('no_create');
+        Log::info($marker . ' options', ['no_create' => $noCreate]);
 
         $cats = Categoria::query()
             ->where(function ($sub) {
@@ -169,6 +171,17 @@ class ProdSyncCategorias extends Command
                         continue;
                     }
                     // Crear
+                    if ($noCreate) {
+                        $this->line("[TEN#{$tenId}] SKIP create (no_create) slug={$slug} parent={$wooParentId}");
+                        Log::info($marker . ' skip create', [
+                            'ten_id' => $tenId,
+                            'slug' => $slug,
+                            'woo_parent_id' => $wooParentId,
+                            'pass' => $pass,
+                        ]);
+                        $skipped++;
+                        continue;
+                    }
                     $resp = $client->createCategoriaProducto($payload);
                     $wcId = (int)($resp['id'] ?? 0);
                     $wcParent = (int)($resp['parent'] ?? $wooParentId);
@@ -205,8 +218,8 @@ class ProdSyncCategorias extends Command
             Log::info($marker . ' pass end', ['pass' => $pass, 'remaining' => $remaining, 'progress' => $progressThisPass]);
             if ($progressThisPass === 0) break;
         }
-        $this->info("OK fin. synced={$synced} | created={$created} | linked={$linked} | updated={$updated} | errors={$errors}");
-        Log::info($marker . ' done', compact('synced','created','linked','updated','errors'));
+        $this->info("OK fin. synced={$synced} | created={$created} | linked={$linked} | updated={$updated} | skipped={$skipped} | errors={$errors}");
+        Log::info($marker . ' done', compact('synced','created','linked','updated','skipped','errors'));
         return $errors > 0 ? self::FAILURE : self::SUCCESS;
     }
 

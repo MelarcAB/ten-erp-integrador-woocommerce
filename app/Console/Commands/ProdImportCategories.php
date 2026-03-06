@@ -53,12 +53,17 @@ class ProdImportCategories extends Command
         $now = now();
         $rows = [];
         $skippedNoTenId = 0;
+        $skippedNoUsar = 0;
         $dbCols = $this->dbColumns();
         $dbColsFlip = array_flip($dbCols);
 
         foreach ($tenCats as $tenRow) {
             if (!is_array($tenRow)) continue;
             $attrs = TenCategoryMapper::toCategoriaAttributes($tenRow);
+            if ($this->containsNoUsar($attrs['ten_nombre'] ?? null) || $this->containsNoUsar($attrs['ten_web_nombre'] ?? null)) {
+                $skippedNoUsar++;
+                continue;
+            }
             if (empty($attrs['ten_id_numero'])) {
                 $skippedNoTenId++;
                 continue;
@@ -75,8 +80,12 @@ class ProdImportCategories extends Command
             $rows[] = $row;
         }
 
-        $this->line("Mapeadas: " . count($rows) . " | sin ten_id_numero: {$skippedNoTenId}");
-        Log::info($marker . ' mapeadas', ['valid_rows' => count($rows), 'skipped_no_ten_id_numero' => $skippedNoTenId]);
+        $this->line("Mapeadas: " . count($rows) . " | sin ten_id_numero: {$skippedNoTenId} | omitidas por 'no usar': {$skippedNoUsar}");
+        Log::info($marker . ' mapeadas', [
+            'valid_rows' => count($rows),
+            'skipped_no_ten_id_numero' => $skippedNoTenId,
+            'skipped_no_usar' => $skippedNoUsar,
+        ]);
         if (count($rows) === 0) return self::SUCCESS;
 
         // Deduplicar por ten_id_numero
@@ -195,5 +204,11 @@ class ProdImportCategories extends Command
             'updated_at',
             'deleted_at',
         ];
+    }
+
+    private function containsNoUsar(?string $name): bool
+    {
+        if ($name === null || $name === '') return false;
+        return stripos($name, 'no usar') !== false;
     }
 }

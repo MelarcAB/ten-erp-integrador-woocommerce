@@ -332,6 +332,13 @@ class ProdSyncClients extends Command
             $dirs[] = $dirPayload;
         }
 
+        // TEN requiere que la primera dirección tenga IdTen = -1 para asociarla al cliente.
+        if (!empty($dirs)) {
+            $first = $dirs[0];
+            $first['IdTen'] = '-1';
+            array_unshift($dirs, $first);
+        }
+
         if (empty($dirs)) {
             $dirs[] = [
                 'Codigo' => (string)($cliente->getKey()),

@@ -12,11 +12,10 @@ class Categoria extends Model
     protected $table = 'categorias';
 
     /**
-     * La tabla categorias NO tiene columna id.
-     * Usamos ten_id_numero como clave primaria natural.
+     * La tabla categorias ahora tiene columna id autoincremental.
      */
-    protected $primaryKey = 'ten_id_numero';
-    public $incrementing = false;
+    protected $primaryKey = 'id';
+    public $incrementing = true;
     protected $keyType = 'int';
 
     /**
