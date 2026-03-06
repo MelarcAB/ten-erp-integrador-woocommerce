@@ -53,6 +53,7 @@ class ProdSyncCategorias extends Command
         $created = 0;
         $updated = 0;
         $linked  = 0;
+        $validated = 0;
         $skipped = 0;
         $errors  = 0;
 
@@ -67,6 +68,7 @@ class ProdSyncCategorias extends Command
         $maxPasses = 10;
         $pass = 0;
         $remaining = count($pending);
+        $wooExistsCache = [];
 
         while ($remaining > 0 && $pass < $maxPasses) {
             $pass++;
@@ -100,28 +102,39 @@ class ProdSyncCategorias extends Command
                 if ($tenParentId > 0 && isset($wooIdByTenId[$tenParentId])) {
                     $wooParentId = (int) $wooIdByTenId[$tenParentId];
                 }
-                $payload = [
-                    'name' => $name,
-                    'slug' => $slug,
-                    'parent' => $wooParentId,
-                ];
                 try {
-                    if (!empty($c->woocommerce_categoria_id)) {
-                        $wooId = (int) $c->woocommerce_categoria_id;
-                        $resp = $client->updateCategoriaProducto($wooId, $payload);
-                        $wcId = (int)($resp['id'] ?? $wooId);
-                        $wcParent = (int)($resp['parent'] ?? $wooParentId);
-                        $c->woocommerce_categoria_id = $wcId;
-                        $c->woocommerce_categoria_padre_id = $wcParent > 0 ? $wcParent : null;
-                        $c->markSynced();
-                        $wooIdByTenId[$tenId] = $wcId;
-                        $wooIdBySlugParent[$this->slugParentKey($slug, $wcParent)] = $wcId;
-                        $this->line("[TEN#{$tenId}] UPDATE WooCat#{$wcId} slug={$slug} parent={$wcParent}");
-                        $updated++;
-                        $synced++;
-                        $progressThisPass++;
+                    $wooIdInDb = (int)($c->woocommerce_categoria_id ?? 0);
+                    if ($wooIdInDb > 0) {
+                        $exists = $this->wooCategoryExists($client, $wooIdInDb, $wooExistsCache);
+                        if ($exists) {
+                            $c->markSynced();
+                            $wooIdByTenId[$tenId] = $wooIdInDb;
+                            $this->line("[TEN#{$tenId}] OK WooCat#{$wooIdInDb} exists (skip update)");
+                            $validated++;
+                            $synced++;
+                            $progressThisPass++;
+                            continue;
+                        }
+                        $this->line("[TEN#{$tenId}] WooCat#{$wooIdInDb} missing -> create/link");
+                        Log::info($marker . ' woo missing', ['ten_id' => $tenId, 'woo_id' => $wooIdInDb, 'pass' => $pass]);
+                    }
+
+                    if ($wooParentId > 0 && ! $this->wooCategoryExists($client, $wooParentId, $wooExistsCache)) {
+                        $this->line("[TEN#{$tenId}] SKIP (parent WooCat#{$wooParentId} missing)");
+                        Log::info($marker . ' skip parent missing', [
+                            'ten_id' => $tenId,
+                            'woo_parent_id' => $wooParentId,
+                            'pass' => $pass,
+                        ]);
+                        $skipped++;
                         continue;
                     }
+
+                    $payload = [
+                        'name' => $name,
+                        'slug' => $slug,
+                        'parent' => $wooParentId,
+                    ];
                     // Buscar por slug + parent esperado
                     $wooId = $this->findWooCategoryIdBySlugAndParent(
                         $client, $slug, $wooParentId, $wooIdBySlugParent, $marker, ['ten_id' => $tenId]
@@ -218,8 +231,8 @@ class ProdSyncCategorias extends Command
             Log::info($marker . ' pass end', ['pass' => $pass, 'remaining' => $remaining, 'progress' => $progressThisPass]);
             if ($progressThisPass === 0) break;
         }
-        $this->info("OK fin. synced={$synced} | created={$created} | linked={$linked} | updated={$updated} | skipped={$skipped} | errors={$errors}");
-        Log::info($marker . ' done', compact('synced','created','linked','updated','skipped','errors'));
+        $this->info("OK fin. synced={$synced} | validated={$validated} | created={$created} | linked={$linked} | updated={$updated} | skipped={$skipped} | errors={$errors}");
+        Log::info($marker . ' done', compact('synced','validated','created','linked','updated','skipped','errors'));
         return $errors > 0 ? self::FAILURE : self::SUCCESS;
     }
 
@@ -294,5 +307,16 @@ class ProdSyncCategorias extends Command
             }
         }
         return 0;
+    }
+
+    private function wooCategoryExists(WooCommerceClient $client, int $wooId, array &$cache): bool
+    {
+        if ($wooId <= 0) return false;
+        if (array_key_exists($wooId, $cache)) {
+            return (bool) $cache[$wooId];
+        }
+        $exists = $client->categoriaProductoExists($wooId);
+        $cache[$wooId] = $exists;
+        return $exists;
     }
 }

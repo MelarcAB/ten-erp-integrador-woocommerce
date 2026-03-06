@@ -546,6 +546,43 @@ class WooCommerceClient
     }
 
     /**
+     * Verifica si existe una categoría por ID.
+     */
+    public function categoriaProductoExists(int $id): bool
+    {
+        $url = $this->baseUrl . '/products/categories/' . $id;
+
+        $response = $this->http()->get($url);
+
+        if ($response->status() === 404) {
+            return false;
+        }
+
+        if (! $response->successful()) {
+            Log::warning('WC product category GET failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+
+            throw new RuntimeException("WC product category GET failed with HTTP {$response->status()}");
+        }
+
+        $json = $response->json();
+
+        if (is_array($json) && !array_is_list($json)) {
+            return !empty($json['id']);
+        }
+
+        Log::warning('WC product category GET unexpected response shape', [
+            'url' => $url,
+            'json' => $json,
+        ]);
+
+        throw new RuntimeException('WC product category GET returned an unexpected response shape');
+    }
+
+    /**
      * POST /products/categories
      *
      * @param array<string, mixed> $payload
