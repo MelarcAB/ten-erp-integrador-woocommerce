@@ -46,6 +46,19 @@ class ProdSyncClients extends Command
         $dryRun = (bool) $this->option('dry-run');
         $limit = max(1, (int) $this->option('limit'));
 
+        // Paso 0: refrescar clientes/direcciones desde Woo a BD local
+        $this->info('Refrescando clientes y direcciones desde WooCommerce...');
+        $importArgs = [];
+        if ($dryRun) {
+            $importArgs['--dry-run'] = true;
+        }
+        $importExit = $this->call('app:prod-import-clients', $importArgs);
+        if ($importExit !== self::SUCCESS) {
+            $this->error('Falló el import local desde WooCommerce. Se aborta sync a TEN.');
+            Log::error($marker . ' pre-sync woo import failed', ['exit_code' => $importExit, 'dry_run' => $dryRun]);
+            return self::FAILURE;
+        }
+
         $modifiedAfterOpt = $this->option('modified-after');
         $modifiedAfter = null;
         if (is_string($modifiedAfterOpt) && $modifiedAfterOpt !== '') {

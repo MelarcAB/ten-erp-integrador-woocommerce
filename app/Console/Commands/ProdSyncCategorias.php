@@ -32,6 +32,16 @@ class ProdSyncCategorias extends Command
         $marker = '[PROD_SYNC_CATEGORIAS v2]';
         $this->line($marker . ' start');
         Log::info($marker . ' start');
+
+        // Paso 0: refrescar categorías desde TEN (nuevas/cambios => pending)
+        $this->info('Refrescando categorías desde TEN antes de sincronizar...');
+        $importExit = $this->call('app:prod-import-categories');
+        if ($importExit !== self::SUCCESS) {
+            $this->error('Falló el import de categorías desde TEN. Se aborta sync.');
+            Log::error($marker . ' pre-sync import failed', ['exit_code' => $importExit]);
+            return self::FAILURE;
+        }
+
         $noCreate = (bool) $this->option('no_create');
         Log::info($marker . ' options', ['no_create' => $noCreate]);
 

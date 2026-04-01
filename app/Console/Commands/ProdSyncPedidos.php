@@ -48,6 +48,26 @@ class ProdSyncPedidos extends Command
         $dryRun = (bool) $this->option('dry-run');
         $onlyPending = (bool) $this->option('only-pending');
 
+        // Paso 0: refrescar pedidos/líneas desde Woo a BD local
+        $this->info('Refrescando pedidos y líneas desde WooCommerce...');
+        $importArgs = [];
+        if ($dryRun) {
+            $importArgs['--dry-run'] = true;
+        }
+        if ($orderIdForImport = $this->option('order-id')) {
+            $importArgs['--include'] = (string) ((int) $orderIdForImport);
+        }
+        $importExit = $this->call('app:prod-import-pedidos', $importArgs);
+        if ($importExit !== self::SUCCESS) {
+            $this->error('Falló el import local de pedidos desde WooCommerce. Se aborta sync a TEN.');
+            Log::error($marker . ' pre-sync woo import failed', [
+                'exit_code' => $importExit,
+                'dry_run' => $dryRun,
+                'order_id' => $orderIdForImport ?? null,
+            ]);
+            return self::FAILURE;
+        }
+
         $statuses = $onlyPending ? ['pending'] : ['pending', 'error'];
 
         $query = Pedidos::query()

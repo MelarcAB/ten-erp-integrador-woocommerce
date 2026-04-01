@@ -35,140 +35,145 @@ class ProdSyncProductos extends Command
         $this->line($marker . ' start');
         Log::info($marker . ' start');
 
-        $productos = Producto::query()
+        // Paso 0: refrescar productos desde TEN (nuevos/cambios => pending)
+        $this->info('Refrescando productos desde TEN antes de sincronizar...');
+        $importExit = $this->call('app:prod-import-productos');
+        if ($importExit !== self::SUCCESS) {
+            $this->error('Falló el import de productos desde TEN. Se aborta sync.');
+            Log::error($marker . ' pre-sync import failed', ['exit_code' => $importExit]);
+            return self::FAILURE;
+        }
+
+        $pendingQuery = Producto::query()
             ->where('sync_status', 'pending')
-            ->get();
-        $total = $productos->count();
+            ->orderBy('id');
+        $total = (clone $pendingQuery)->count();
         $this->info("Seleccionados: {$total}");
         Log::info($marker . ' selected', ['count' => $total]);
 
-        if ($total > 0) {
-            /** @var WooCommerceClient $client */
-            $client = app(WooCommerceClient::class);
+        /** @var WooCommerceClient $client */
+        $client = app(WooCommerceClient::class);
 
+        if ($total > 0) {
             $synced = 0;
             $linked = 0;
             $created = 0;
             $updated = 0;
             $skipped = 0;
             $errors = 0;
-            $remoteByWooId = [];
             $processedSync = 0;
-
-            foreach ($productos as $p) {
-                $processedSync++;
-                $progress = $this->syncProgress($processedSync, $total);
-                /** @var Producto $p */
-                $sku = trim((string) ($p->ten_codigo ?? ''));
-                if ($sku === '') {
-                    $errors++;
-                    $msg = 'Producto sin ten_codigo (SKU)';
-                    $this->warn("[{$p->ten_id}] ERROR: {$msg}{$progress}");
-                    Log::warning($marker . ' product missing sku', ['ten_id' => $p->ten_id]);
-                    $p->sync_status = 'error';
-                    $p->last_error = $msg;
-                    $p->save();
-                    continue;
-                }
-                $payload = $this->toWooPayload($p);
-                try {
-                    // Si ya tiene woo id -> update
-                    if (!empty($p->woocommerce_id)) {
-                        $wooId = (int) $p->woocommerce_id;
-                        $remote = $client->getProductoById($wooId);
-                        if (is_array($remote)) {
-                            $remoteByWooId[$wooId] = $remote;
+            $pendingQuery->chunkById(200, function ($productos) use (
+                $client,
+                $marker,
+                $total,
+                &$processedSync,
+                &$synced,
+                &$linked,
+                &$created,
+                &$updated,
+                &$skipped,
+                &$errors
+            ) {
+                foreach ($productos as $p) {
+                    $processedSync++;
+                    $progress = $this->syncProgress($processedSync, $total);
+                    /** @var Producto $p */
+                    $sku = trim((string) ($p->ten_codigo ?? ''));
+                    if ($sku === '') {
+                        $errors++;
+                        $msg = 'Producto sin ten_codigo (SKU)';
+                        $this->warn("[{$p->ten_id}] ERROR: {$msg}{$progress}");
+                        Log::warning($marker . ' product missing sku', ['ten_id' => $p->ten_id]);
+                        $p->sync_status = 'error';
+                        $p->last_error = $msg;
+                        $p->save();
+                        continue;
+                    }
+                    $payload = $this->toWooPayload($p);
+                    try {
+                        // Si ya tiene woo id -> update
+                        if (!empty($p->woocommerce_id)) {
+                            $wooId = (int) $p->woocommerce_id;
+                            $remote = $client->getProductoById($wooId);
+                            $remoteDesc = is_array($remote) ? trim((string)($remote['description'] ?? '')) : '';
+                            $remoteShort = is_array($remote) ? trim((string)($remote['short_description'] ?? '')) : '';
+                            // Descripción larga
+                            if (mb_strlen($remoteDesc) > mb_strlen($payload['description'] ?? '')) {
+                                unset($payload['description']);
+                            }
+                            // Descripción corta
+                            if (mb_strlen($remoteShort) > mb_strlen($payload['short_description'] ?? '')) {
+                                unset($payload['short_description']);
+                            }
+                            $resp = $client->updateProducto($wooId, $payload);
+                            $wcId = (int)($resp['id'] ?? $wooId);
+                            $wcSku = (string)($resp['sku'] ?? $sku);
+                            $p->woocommerce_id = $wcId;
+                            $p->woocommerce_sku = $wcSku !== '' ? $wcSku : $sku;
+                            $p->sync_status = 'synced';
+                            $p->last_error = null;
+                            $p->save();
+                            $updated++;
+                            $synced++;
+                            $this->line("[{$p->ten_id}] UPDATE Woo #{$wcId} sku={$wcSku}{$progress}");
+                            continue;
                         }
-                        $remoteDesc = is_array($remote) ? trim((string)($remote['description'] ?? '')) : '';
-                        $remoteShort = is_array($remote) ? trim((string)($remote['short_description'] ?? '')) : '';
-                        // Descripción larga
-                        if (mb_strlen($remoteDesc) > mb_strlen($payload['description'] ?? '')) {
-                            unset($payload['description']);
+                        // Buscar por SKU en Woo
+                        $found = $client->getProductosBySku($sku, 100, 1);
+                        $first = $found[0] ?? null;
+                        if (is_array($first) && !empty($first['id'])) {
+                            $wcId = (int) $first['id'];
+                            $wcSku = (string)($first['sku'] ?? $sku);
+                            $remoteDesc = trim((string)($first['description'] ?? ''));
+                            $remoteShort = trim((string)($first['short_description'] ?? ''));
+                            if (mb_strlen($remoteDesc) > mb_strlen($payload['description'] ?? '')) {
+                                unset($payload['description']);
+                            }
+                            if (mb_strlen($remoteShort) > mb_strlen($payload['short_description'] ?? '')) {
+                                unset($payload['short_description']);
+                            }
+                            $resp = $client->updateProducto($wcId, $payload);
+                            $wcId = (int)($resp['id'] ?? $wcId);
+                            $wcSku = (string)($resp['sku'] ?? $wcSku);
+                            $p->woocommerce_id = $wcId;
+                            $p->woocommerce_sku = $wcSku !== '' ? $wcSku : $sku;
+                            $p->sync_status = 'synced';
+                            $p->last_error = null;
+                            $p->save();
+                            $linked++;
+                            $updated++;
+                            $synced++;
+                            $this->line("[{$p->ten_id}] LINK Woo #{$wcId} sku={$wcSku}{$progress}");
+                            continue;
                         }
-                        // Descripción corta
-                        if (mb_strlen($remoteShort) > mb_strlen($payload['short_description'] ?? '')) {
-                            unset($payload['short_description']);
-                        }
-                        $resp = $client->updateProducto($wooId, $payload);
-                        $wcId = (int)($resp['id'] ?? $wooId);
+                        // No existe -> crear
+                        $resp = $client->createProducto($payload);
+                        $wcId = (int)($resp['id'] ?? 0);
                         $wcSku = (string)($resp['sku'] ?? $sku);
+                        if ($wcId <= 0) {
+                            throw new \RuntimeException('Respuesta Woo sin id al crear producto');
+                        }
                         $p->woocommerce_id = $wcId;
                         $p->woocommerce_sku = $wcSku !== '' ? $wcSku : $sku;
                         $p->sync_status = 'synced';
                         $p->last_error = null;
                         $p->save();
-                        if (is_array($resp)) {
-                            $remoteByWooId[$wcId] = $resp;
-                        }
-                        $updated++;
+                        $created++;
                         $synced++;
-                        $this->line("[{$p->ten_id}] UPDATE Woo #{$wcId} sku={$wcSku}{$progress}");
-                        continue;
-                    }
-                    // Buscar por SKU en Woo
-                    $found = $client->getProductosBySku($sku, 100, 1);
-                    $first = $found[0] ?? null;
-                    if (is_array($first) && !empty($first['id'])) {
-                        $wcId = (int) $first['id'];
-                        $wcSku = (string)($first['sku'] ?? $sku);
-                        $remoteByWooId[$wcId] = $first;
-                        $remoteDesc = trim((string)($first['description'] ?? ''));
-                        $remoteShort = trim((string)($first['short_description'] ?? ''));
-                        if (mb_strlen($remoteDesc) > mb_strlen($payload['description'] ?? '')) {
-                            unset($payload['description']);
-                        }
-                        if (mb_strlen($remoteShort) > mb_strlen($payload['short_description'] ?? '')) {
-                            unset($payload['short_description']);
-                        }
-                        $resp = $client->updateProducto($wcId, $payload);
-                        $wcId = (int)($resp['id'] ?? $wcId);
-                        $wcSku = (string)($resp['sku'] ?? $wcSku);
-                        $p->woocommerce_id = $wcId;
-                        $p->woocommerce_sku = $wcSku !== '' ? $wcSku : $sku;
-                        $p->sync_status = 'synced';
-                        $p->last_error = null;
+                        $this->line("[{$p->ten_id}] CREATE Woo #{$wcId} sku={$wcSku}{$progress}");
+                    } catch (Throwable $e) {
+                        $errors++;
+                        $err = $e->getMessage();
+                        $this->warn("[{$p->ten_id}] ERROR sku={$sku}: {$err}{$progress}");
+                        Log::error($marker . ' product sync failed', ['ten_id' => $p->ten_id, 'sku' => $sku, 'error' => $err]);
+                        $p->sync_status = 'error';
+                        $p->last_error = $err;
                         $p->save();
-                        if (is_array($resp)) {
-                            $remoteByWooId[$wcId] = $resp;
-                        }
-                        $linked++;
-                        $updated++;
-                        $synced++;
-                        $this->line("[{$p->ten_id}] LINK Woo #{$wcId} sku={$wcSku}{$progress}");
-                        continue;
                     }
-                    // No existe -> crear
-                    $resp = $client->createProducto($payload);
-                    $wcId = (int)($resp['id'] ?? 0);
-                    $wcSku = (string)($resp['sku'] ?? $sku);
-                    if ($wcId <= 0) {
-                        throw new \RuntimeException('Respuesta Woo sin id al crear producto');
-                    }
-                    $p->woocommerce_id = $wcId;
-                    $p->woocommerce_sku = $wcSku !== '' ? $wcSku : $sku;
-                    $p->sync_status = 'synced';
-                    $p->last_error = null;
-                    $p->save();
-                    if (is_array($resp)) {
-                        $remoteByWooId[$wcId] = $resp;
-                    }
-                    $created++;
-                    $synced++;
-                    $this->line("[{$p->ten_id}] CREATE Woo #{$wcId} sku={$wcSku}{$progress}");
-                } catch (Throwable $e) {
-                    $errors++;
-                    $err = $e->getMessage();
-                    $this->warn("[{$p->ten_id}] ERROR sku={$sku}: {$err}{$progress}");
-                    Log::error($marker . ' product sync failed', ['ten_id' => $p->ten_id, 'sku' => $sku, 'error' => $err]);
-                    $p->sync_status = 'error';
-                    $p->last_error = $err;
-                    $p->save();
                 }
-            }
+            });
             $this->info("OK fin. synced={$synced} | created={$created} | linked={$linked} | updated={$updated} | errors={$errors}");
             Log::info($marker . ' done', compact('synced','created','linked','updated','errors'));
-        } else {
-            $client = app(WooCommerceClient::class);
         }
 
         $this->info("Validando categorías de productos en Woo...");
@@ -181,101 +186,54 @@ class ProdSyncProductos extends Command
                 ->map(fn($v) => (int) $v)
                 ->all();
         }
-        $productosTodos = Producto::query()
+        $productosTodosQuery = Producto::query()
             ->whereNotNull('woocommerce_id')
             ->where('woocommerce_id', '!=', '')
-            ->get();
-        $totalValidacion = $productosTodos->count();
+            ->orderBy('id');
+        $totalValidacion = (clone $productosTodosQuery)->count();
         $processedValidacion = 0;
-        foreach ($productosTodos as $p) {
-            $processedValidacion++;
-            $wooId = (int) $p->woocommerce_id;
-            if (!$wooId) continue;
-            $wooCatIds = $this->desiredWooCategoryIdsForProduct($p, $catWooByTenId);
-            if (empty($wooCatIds)) continue;
-            try {
-                if (!isset($remoteByWooId[$wooId])) {
-                    $remoteByWooId[$wooId] = $client->getProductoById($wooId);
-                }
-                $remote = $remoteByWooId[$wooId];
-                $wooCats = is_array($remote) && isset($remote['categories']) ? $remote['categories'] : [];
-                $currentWooCatIds = [];
-                foreach ($wooCats as $c) {
-                    $catId = (int) ($c['id'] ?? 0);
-                    if ($catId > 0) {
-                        $currentWooCatIds[] = $catId;
+        $productosTodosQuery->chunkById(200, function ($productos) use (
+            $client,
+            $marker,
+            $catWooByTenId,
+            $totalValidacion,
+            &$processedValidacion
+        ) {
+            foreach ($productos as $p) {
+                $processedValidacion++;
+                $wooId = (int) $p->woocommerce_id;
+                if (!$wooId) continue;
+                $wooCatIds = $this->desiredWooCategoryIdsForProduct($p, $catWooByTenId);
+                if (empty($wooCatIds)) continue;
+                try {
+                    $remote = $client->getProductoById($wooId);
+                    $wooCats = is_array($remote) && isset($remote['categories']) ? $remote['categories'] : [];
+                    $currentWooCatIds = [];
+                    foreach ($wooCats as $c) {
+                        $catId = (int) ($c['id'] ?? 0);
+                        if ($catId > 0) {
+                            $currentWooCatIds[] = $catId;
+                        }
                     }
+                    $currentWooCatIds = array_values(array_unique($currentWooCatIds));
+                    sort($currentWooCatIds);
+                    $expectedWooCatIds = $wooCatIds;
+                    sort($expectedWooCatIds);
+                    if ($currentWooCatIds !== $expectedWooCatIds) {
+                        $payload = ['categories' => array_map(static fn ($id) => ['id' => $id], $wooCatIds)];
+                        $client->updateProducto($wooId, $payload);
+                        $this->line("[{$p->ten_id}] CATEGORÍAS ACTUALIZADAS en Woo #{$wooId} -> " . json_encode($wooCatIds));
+                    }
+                } catch (Throwable $e) {
+                    $this->warn("[{$p->ten_id}] ERROR al validar categoría Woo: " . $e->getMessage());
+                    Log::error($marker . ' categoria sync failed', ['ten_id' => $p->ten_id, 'woo_id' => $wooId, 'cat_ids' => $wooCatIds, 'error' => $e->getMessage()]);
                 }
-                $currentWooCatIds = array_values(array_unique($currentWooCatIds));
-                sort($currentWooCatIds);
-                $expectedWooCatIds = $wooCatIds;
-                sort($expectedWooCatIds);
-                if ($currentWooCatIds !== $expectedWooCatIds) {
-                    $payload = ['categories' => array_map(static fn ($id) => ['id' => $id], $wooCatIds)];
-                    $client->updateProducto($wooId, $payload);
-                    $this->line("[{$p->ten_id}] CATEGORÍAS ACTUALIZADAS en Woo #{$wooId} -> " . json_encode($wooCatIds));
+                if (($processedValidacion % 500) === 0 || $processedValidacion === $totalValidacion) {
+                    $this->line("Validación categorías: {$processedValidacion}/{$totalValidacion}");
                 }
-            } catch (Throwable $e) {
-                $this->warn("[{$p->ten_id}] ERROR al validar categoría Woo: " . $e->getMessage());
-                Log::error($marker . ' categoria sync failed', ['ten_id' => $p->ten_id, 'woo_id' => $wooId, 'cat_ids' => $wooCatIds, 'error' => $e->getMessage()]);
             }
-            if (($processedValidacion % 500) === 0 || $processedValidacion === $totalValidacion) {
-                $this->line("Validación categorías: {$processedValidacion}/{$totalValidacion}");
-            }
-        }
+        });
         $this->info("Validación de categorías finalizada.");
-
-        // --- Sincronización directa de categorías desde TEN para todos los productos ---
-        $this->info("Sincronizando categorías de productos desde TEN...");
-        $tenClient = app(\App\Integrations\TenClient::class);
-        try {
-            $tenProducts = $tenClient->getProducts(\Carbon\Carbon::create(2022, 1, 1, 0, 0, 0), 100000, 0);
-        } catch (Throwable $e) {
-            $this->warn('No se pudo obtener productos de TEN para sincronizar categorías: ' . $e->getMessage());
-            Log::warning($marker . ' ten getProducts failed', ['error' => $e->getMessage()]);
-            $tenProducts = [];
-        }
-        $catMap = \App\Models\Categoria::query()
-            ->whereNotNull('woocommerce_categoria_id')
-            ->pluck('woocommerce_categoria_id', 'ten_id_numero')
-            ->map(fn($v) => (int)$v)
-            ->all();
-        $wooIdByTenId = Producto::query()
-            ->whereNotNull('woocommerce_id')
-            ->where('woocommerce_id', '!=', '')
-            ->pluck('woocommerce_id', 'ten_id')
-            ->map(fn($v) => (int)$v)
-            ->all();
-        $actualizados = 0;
-        $processedTen = 0;
-        $tenTotal = count($tenProducts);
-        foreach ($tenProducts as $tenRow) {
-            $processedTen++;
-            $tenId = isset($tenRow['Id']) ? (int)$tenRow['Id'] : (isset($tenRow['IdProducto']) ? (int)$tenRow['IdProducto'] : null);
-            if (!$tenId || empty($tenRow['Categorias']) || !is_array($tenRow['Categorias'])) continue;
-            $wooCatIds = [];
-            foreach ($tenRow['Categorias'] as $catArr) {
-                $catTenId = isset($catArr['IdCategoria']) ? (int)$catArr['IdCategoria'] : null;
-                if ($catTenId && isset($catMap[$catTenId])) {
-                    $wooCatIds[] = ['id' => $catMap[$catTenId]];
-                }
-            }
-            if (empty($wooCatIds)) continue;
-            $wooId = (int) ($wooIdByTenId[$tenId] ?? 0);
-            if ($wooId <= 0) continue;
-            try {
-                $client->updateProducto($wooId, ['categories' => $wooCatIds]);
-                $this->line("[{$tenId}] CATEGORÍAS ACTUALIZADAS en Woo -> " . json_encode($wooCatIds));
-                $actualizados++;
-            } catch (Throwable $e) {
-                $this->warn("[{$tenId}] ERROR al actualizar categorías desde TEN: " . $e->getMessage());
-                Log::error($marker . ' categoria sync from ten failed', ['ten_id' => $tenId, 'woo_id' => $wooId, 'cat_ids' => $wooCatIds, 'error' => $e->getMessage()]);
-            }
-            if (($processedTen % 500) === 0 || $processedTen === $tenTotal) {
-                $this->line("TEN categorías: {$processedTen}/{$tenTotal}");
-            }
-        }
-        $this->info("Sincronización de categorías desde TEN finalizada. Productos actualizados: {$actualizados}");
 
         return self::SUCCESS;
     }
