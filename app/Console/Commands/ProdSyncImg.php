@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Integrations\WooCommerceClient;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -25,7 +26,7 @@ class ProdSyncImg extends Command
      *
      * @var string
      */
-    protected $description = 'Lee imágenes en FTP, busca producto por SKU en Woo y actualiza imagen';
+    protected $description = 'Lee imágenes en FTP, mapea por SKU y sincroniza imagen principal/secundarias en Woo';
 
     /**
      * Execute the console command.
@@ -131,69 +132,153 @@ class ProdSyncImg extends Command
                 return self::FAILURE;
             }
 
-            $imgExts = ['jpg', 'jpeg', 'png','gif', 'webp'];
-            $processed = 0;
-            $updated = 0;
-            $skipped = 0;
-            $deleted = 0;
+            $imgExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+            $processedFiles = 0;
+            $skippedFiles = 0;
+
+            /** @var array<string, array{woo_id:int,primary:?string,secondaries:array<int,array{filename:string,suffix:string}>}> $skuImages */
+            $skuImages = [];
 
             foreach ($list as $item) {
                 $filename = basename((string) $item);
-                if ($filename === '' || $filename === '.' || $filename === '..') continue;
-
-                $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
-                if (!in_array($ext, $imgExts, true)) continue;
-
-                $sku = pathinfo($filename, PATHINFO_FILENAME);
-                $this->line("Archivo: {$filename} | SKU: {$sku}");
-
-                if ($sku === '' || !isset($skuToId[$sku])) {
-                    $skipped++;
+                if ($filename === '' || $filename === '.' || $filename === '..') {
                     continue;
                 }
 
-                $wooId = (int) $skuToId[$sku];
-                $imageUrl = rtrim($publicBase, '/') . '/' . rawurlencode($filename);
+                $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+                if (!in_array($ext, $imgExts, true)) {
+                    continue;
+                }
+
+                $skuPart = pathinfo($filename, PATHINFO_FILENAME);
+                $mapping = $this->mapFilenameToSku($skuPart, $skuToId);
+                if ($mapping === null) {
+                    $skippedFiles++;
+                    continue;
+                }
+
+                $sku = $mapping['sku'];
+                $wooId = (int) $mapping['woo_id'];
+                $type = $mapping['type'];
+                $suffix = (string) ($mapping['suffix'] ?? '');
+
+                if (!isset($skuImages[$sku])) {
+                    $skuImages[$sku] = [
+                        'woo_id' => $wooId,
+                        'primary' => null,
+                        'secondaries' => [],
+                    ];
+                }
+
+                if ($type === 'primary') {
+                    $currentPrimary = $skuImages[$sku]['primary'];
+                    if ($currentPrimary === null || $this->isBetterPrimaryImage($filename, $currentPrimary)) {
+                        $skuImages[$sku]['primary'] = $filename;
+                    }
+                } else {
+                    $skuImages[$sku]['secondaries'][] = [
+                        'filename' => $filename,
+                        'suffix' => $suffix,
+                    ];
+                }
+
+                $processedFiles++;
+            }
+
+            $processedProducts = 0;
+            $updatedProducts = 0;
+            $skippedProducts = 0;
+            $errors = 0;
+            $deleted = 0;
+
+            foreach ($skuImages as $sku => $group) {
+                $processedProducts++;
+                $wooId = (int) $group['woo_id'];
+                $primaryFilename = $group['primary'];
+                $secondaries = $group['secondaries'];
+                usort($secondaries, fn ($a, $b) => $this->compareSecondarySuffix($a['suffix'], $b['suffix']));
+
+                $existingPrimary = null;
+                if ($primaryFilename === null && !empty($secondaries)) {
+                    $existingPrimary = $this->fetchExistingPrimaryImage($woo, $wooId);
+                }
+
+                $imagesPayload = [];
+                $filesToDelete = [];
+                $nextPos = 0;
+
+                if ($primaryFilename !== null) {
+                    $primaryUrl = $this->buildPublicImageUrl($publicBase, $primaryFilename);
+                    if ($this->urlExists($primaryUrl)) {
+                        $imagesPayload[] = ['src' => $primaryUrl, 'position' => $nextPos];
+                        $filesToDelete[] = $primaryFilename;
+                        $nextPos++;
+                    } else {
+                        $this->warn("URL no disponible (principal): {$primaryUrl}");
+                    }
+                } elseif ($existingPrimary !== null) {
+                    $existingId = (int) ($existingPrimary['id'] ?? 0);
+                    $existingSrc = trim((string) ($existingPrimary['src'] ?? ''));
+                    if ($existingId > 0) {
+                        $imagesPayload[] = ['id' => $existingId, 'position' => $nextPos];
+                        $nextPos++;
+                    } elseif ($existingSrc !== '') {
+                        $imagesPayload[] = ['src' => $existingSrc, 'position' => $nextPos];
+                        $nextPos++;
+                    }
+                }
+
+                foreach ($secondaries as $sec) {
+                    $secondaryFilename = $sec['filename'];
+                    $secondaryUrl = $this->buildPublicImageUrl($publicBase, $secondaryFilename);
+                    if (!$this->urlExists($secondaryUrl)) {
+                        $this->warn("URL no disponible (secundaria): {$secondaryUrl}");
+                        continue;
+                    }
+                    $imagesPayload[] = ['src' => $secondaryUrl, 'position' => $nextPos];
+                    $filesToDelete[] = $secondaryFilename;
+                    $nextPos++;
+                }
+
+                if (empty($imagesPayload)) {
+                    $skippedProducts++;
+                    continue;
+                }
 
                 if ($dryRun) {
-                    $this->line("DRY RUN: actualizaría Woo#{$wooId} con {$imageUrl} y borraría {$filename}");
-                    $processed++;
+                    $this->line("DRY RUN: Woo#{$wooId} sku={$sku} -> images=" . count($imagesPayload) . ' | files=' . implode(', ', $filesToDelete));
                     continue;
                 }
 
                 try {
-                    if (!$this->urlExists($imageUrl)) {
-                        $this->warn("URL no disponible: {$imageUrl}");
-                        $skipped++;
-                        continue;
-                    }
+                    $woo->updateProducto($wooId, ['images' => $imagesPayload]);
+                    $updatedProducts++;
 
-                    $woo->updateProducto($wooId, [
-                        'images' => [
-                            ['src' => $imageUrl, 'position' => 0],
-                        ],
-                    ]);
-                    $updated++;
-
-                    if (@ftp_delete($conn, $item)) {
-                        $deleted++;
-                    } else {
-                        $this->warn("No se pudo borrar {$filename} del FTP.");
+                    foreach (array_values(array_unique($filesToDelete)) as $filename) {
+                        if (@ftp_delete($conn, $filename)) {
+                            $deleted++;
+                        } else {
+                            $this->warn("No se pudo borrar {$filename} del FTP.");
+                        }
                     }
                 } catch (Throwable $e) {
-                    $this->warn("Error actualizando Woo#{$wooId} para {$filename}: " . $e->getMessage());
+                    $errors++;
+                    $this->warn("Error actualizando Woo#{$wooId} sku={$sku}: " . $e->getMessage());
                     Log::warning($marker . ' woo update failed', [
                         'woocommerce_id' => $wooId,
                         'sku' => $sku,
-                        'filename' => $filename,
+                        'primary' => $primaryFilename,
+                        'secondary_count' => count($secondaries),
                         'error' => $e->getMessage(),
                     ]);
                 }
-
-                $processed++;
             }
 
-            $this->info("OK: procesados={$processed} | updated={$updated} | skipped={$skipped} | deleted={$deleted}");
+            $this->info(
+                "OK: files_processed={$processedFiles} | files_skipped={$skippedFiles}"
+                . " | products_processed={$processedProducts} | products_updated={$updatedProducts}"
+                . " | products_skipped={$skippedProducts} | errors={$errors} | deleted={$deleted}"
+            );
             return self::SUCCESS;
         } finally {
             @ftp_close($conn);
@@ -214,6 +299,137 @@ class ProdSyncImg extends Command
             $out[] = (string) end($parts);
         }
         return $out;
+    }
+
+    /**
+     * @param array<string,int> $skuToId
+     * @return array{sku:string,woo_id:int,type:string,suffix:?string}|null
+     */
+    private function mapFilenameToSku(string $filenameNoExt, array $skuToId): ?array
+    {
+        $filenameNoExt = trim($filenameNoExt);
+        if ($filenameNoExt === '') {
+            return null;
+        }
+
+        // SKU exacto => imagen principal
+        if (isset($skuToId[$filenameNoExt])) {
+            return [
+                'sku' => $filenameNoExt,
+                'woo_id' => (int) $skuToId[$filenameNoExt],
+                'type' => 'primary',
+                'suffix' => null,
+            ];
+        }
+
+        // SKU_secundaria => por ejemplo ASDF_1, ASDF_2...
+        $pos = strrpos($filenameNoExt, '_');
+        if ($pos === false || $pos <= 0 || $pos >= strlen($filenameNoExt) - 1) {
+            return null;
+        }
+
+        $baseSku = substr($filenameNoExt, 0, $pos);
+        $suffix = substr($filenameNoExt, $pos + 1);
+        if ($baseSku === '' || $suffix === '' || !isset($skuToId[$baseSku])) {
+            return null;
+        }
+
+        return [
+            'sku' => $baseSku,
+            'woo_id' => (int) $skuToId[$baseSku],
+            'type' => 'secondary',
+            'suffix' => $suffix,
+        ];
+    }
+
+    private function isBetterPrimaryImage(string $candidate, string $current): bool
+    {
+        $priority = static function (string $filename): int {
+            $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+            return match ($ext) {
+                'jpg' => 1,
+                'jpeg' => 2,
+                'png' => 3,
+                'webp' => 4,
+                'gif' => 5,
+                default => 100,
+            };
+        };
+
+        $candPrio = $priority($candidate);
+        $currPrio = $priority($current);
+
+        if ($candPrio !== $currPrio) {
+            return $candPrio < $currPrio;
+        }
+
+        return strcmp($candidate, $current) < 0;
+    }
+
+    private function compareSecondarySuffix(string $a, string $b): int
+    {
+        $a = trim($a);
+        $b = trim($b);
+
+        $aNumeric = ctype_digit($a);
+        $bNumeric = ctype_digit($b);
+        if ($aNumeric && $bNumeric) {
+            $intCmp = (int) $a <=> (int) $b;
+            if ($intCmp !== 0) {
+                return $intCmp;
+            }
+        } elseif ($aNumeric !== $bNumeric) {
+            return $aNumeric ? -1 : 1;
+        }
+
+        return strnatcasecmp($a, $b);
+    }
+
+    private function buildPublicImageUrl(string $publicBase, string $filename): string
+    {
+        return rtrim($publicBase, '/') . '/' . rawurlencode($filename);
+    }
+
+    /**
+     * @return array{id?:int,src?:string}|null
+     */
+    private function fetchExistingPrimaryImage(WooCommerceClient $woo, int $wooId): ?array
+    {
+        if ($wooId <= 0) {
+            return null;
+        }
+
+        try {
+            $product = $woo->getProductoById($wooId);
+        } catch (Throwable $e) {
+            Log::warning('[PROD_SYNC_IMG v1] no se pudo leer producto Woo para preservar principal', [
+                'woocommerce_id' => $wooId,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
+        }
+
+        $images = $product['images'] ?? null;
+        if (!is_array($images) || empty($images)) {
+            return null;
+        }
+
+        $first = $images[0] ?? null;
+        if (!is_array($first)) {
+            return null;
+        }
+
+        $id = (int) ($first['id'] ?? 0);
+        $src = trim((string) ($first['src'] ?? ''));
+
+        if ($id <= 0 && $src === '') {
+            return null;
+        }
+
+        return [
+            'id' => $id > 0 ? $id : null,
+            'src' => $src !== '' ? $src : null,
+        ];
     }
 
     private function urlExists(string $url): bool

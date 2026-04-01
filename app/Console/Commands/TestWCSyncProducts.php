@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Integrations\WooCommerceClient;
 use App\Models\Categoria;
 use App\Models\Producto;
+use App\Models\ProductoCategoriaTen;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -16,7 +17,7 @@ class TestWCSyncProducts extends Command
         {--limit=0 : Límite de productos a procesar (0 = sin límite)}
         {--dry-run : No llama a Woo ni escribe en DB}
         {--sync-stock : Actualiza stock en Woo para productos con woocommerce_id y stock>0}
-        {--force-categories : Fuerza la reasignación de categorías en Woo según categoria_ten_id aunque el producto esté synced}
+        {--force-categories : Fuerza la reasignación de categorías en Woo según pivote (fallback categoria_ten_id) aunque el producto esté synced}
     ';
 
     protected $description = 'Sync productos APP->WooCommerce (alta/enlace/actualización) usando ten_codigo como SKU';
@@ -344,61 +345,82 @@ class TestWCSyncProducts extends Command
     }
 
     /**
-     * Si el producto tiene categoria_ten_id, intenta mapearla con la tabla categorias
+     * Si el producto tiene categorías en pivote, intenta mapearlas con la tabla categorias
      * (categorias.ten_id_numero -> categorias.woocommerce_categoria_id) y añade
-     * la categoría al payload de Woo.
+     * las categorías al payload de Woo.
      *
      * @param array<string,mixed> $payload
      * @return array<string,mixed>
      */
     private function applyWooCategoriesToPayload(Producto $p, array $payload): array
     {
-        $tenCatId = $p->categoria_ten_id;
-
-        if ($tenCatId === null || $tenCatId === '') {
-            return $payload;
+        static $catWooByTenId = null;
+        if ($catWooByTenId === null) {
+            $catWooByTenId = Categoria::query()
+                ->whereNotNull('woocommerce_categoria_id')
+                ->whereNotNull('ten_id_numero')
+                ->pluck('woocommerce_categoria_id', 'ten_id_numero')
+                ->map(fn($v) => (int) $v)
+                ->all();
         }
 
-        $tenCatIdInt = (int) $tenCatId;
-        if ($tenCatIdInt <= 0) {
-            return $payload;
+        $tenCategoryIds = [];
+        $tenProductId = (int) ($p->ten_id ?? 0);
+        if ($tenProductId > 0) {
+            static $pivotByProductoTenId = [];
+            if (!array_key_exists($tenProductId, $pivotByProductoTenId)) {
+                $pivotByProductoTenId[$tenProductId] = ProductoCategoriaTen::query()
+                    ->where('producto_ten_id', $tenProductId)
+                    ->orderBy('orden')
+                    ->pluck('categoria_ten_id')
+                    ->map(static fn ($v) => (int) $v)
+                    ->filter(static fn ($v) => $v > 0)
+                    ->values()
+                    ->all();
+            }
+            $tenCategoryIds = $pivotByProductoTenId[$tenProductId];
+        }
+        if (empty($tenCategoryIds)) {
+            $fallback = (int) ($p->categoria_ten_id ?? 0);
+            if ($fallback > 0) {
+                $tenCategoryIds = [$fallback];
+            }
         }
 
-        $cat = Categoria::query()
-            ->where('ten_id_numero', $tenCatIdInt)
-            ->first(['ten_id_numero', 'woocommerce_categoria_id']);
-
-        if (!$cat) {
+        if (empty($tenCategoryIds)) {
             Log::warning('[WC_PRODUCTS_SYNC] Categoría TEN no encontrada en tabla categorias', [
                 'producto_id' => $p->id,
                 'producto_ten_id' => $p->ten_id,
-                'categoria_ten_id' => $tenCatIdInt,
+                'categoria_ten_id' => $p->categoria_ten_id ?? null,
             ]);
             return $payload;
         }
 
-        $wooCatId = (int) ($cat->woocommerce_categoria_id ?? 0);
-        if ($wooCatId <= 0) {
+        $wooCategoryIds = [];
+        foreach ($tenCategoryIds as $tenCatId) {
+            $wooCatId = (int) ($catWooByTenId[$tenCatId] ?? 0);
+            if ($wooCatId > 0) {
+                $wooCategoryIds[] = $wooCatId;
+            }
+        }
+        $wooCategoryIds = array_values(array_unique($wooCategoryIds));
+        if (empty($wooCategoryIds)) {
             Log::warning('[WC_PRODUCTS_SYNC] Categoría sin woocommerce_categoria_id (aún no enlazada en Woo)', [
                 'producto_id' => $p->id,
                 'producto_ten_id' => $p->ten_id,
-                'categoria_ten_id' => $tenCatIdInt,
-                'categoria_row_ten_id_numero' => $cat->ten_id_numero,
+                'categoria_ten_ids' => $tenCategoryIds,
             ]);
             return $payload;
         }
 
-        // Woo espera: categories: [ { id: 123 } ]
-        $payload['categories'] = [
-            ['id' => $wooCatId],
-        ];
+        $payload['categories'] = array_map(static fn ($id) => ['id' => $id], $wooCategoryIds);
 
         Log::info('[WC_PRODUCTS_SYNC] Aplicando categoría al producto', [
             'producto_id' => $p->id,
             'producto_ten_id' => $p->ten_id,
             'woo_product_id' => $p->woocommerce_id,
-            'categoria_ten_id' => $tenCatIdInt,
-            'woo_category_id' => $wooCatId,
+            'categoria_ten_ids' => $tenCategoryIds,
+            'woo_category_ids' => $wooCategoryIds,
         ]);
 
         return $payload;

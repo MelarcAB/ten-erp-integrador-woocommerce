@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Integrations\TenClient;
 use App\Models\Producto;
+use App\Models\ProductoCategoriaTen;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -26,7 +27,7 @@ class TestWCLinkCategoriesProducts extends Command
      *
      * @var string
      */
-    protected $description = 'Rellena productos.categoria_ten_id consultando la categoría en TEN (tblProductos.Categoria) para productos con categoria_ten_id = NULL';
+    protected $description = 'Rellena productos.categoria_ten_id y la pivote producto_categorias_ten consultando la categoría en TEN para productos sin categoría';
 
     /**
      * Execute the console command.
@@ -86,6 +87,16 @@ class TestWCLinkCategoriesProducts extends Command
 
                     $producto->categoria_ten_id = $categoria;
                     $producto->save();
+                    ProductoCategoriaTen::query()->upsert([
+                        [
+                            'producto_ten_id' => $tenId,
+                            'categoria_ten_id' => (int) $categoria,
+                            'orden' => 0,
+                            'is_primary' => true,
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ],
+                    ], ['producto_ten_id', 'categoria_ten_id'], ['orden', 'is_primary', 'updated_at']);
                     $updated++;
 
                     $this->line("OK producto id={$producto->id} ten_id={$tenId} -> categoria_ten_id={$categoria}");

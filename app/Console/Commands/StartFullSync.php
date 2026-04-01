@@ -21,7 +21,7 @@ class StartFullSync extends Command
         {--items=100000 : (Solo import productos TEN) Items por página}
         {--page=0 : (Solo import productos TEN) Página}
         {--full-sync : En modo full, fuerza validación y actualización completa en Woo (equivale a --only=all + forzar categorías)}
-        {--force-categories : En sincronización, reasigna categorías en Woo según categoria_ten_id para productos ya enlazados}
+        {--force-categories : En sincronización, reasigna categorías en Woo según pivote producto_categorias_ten (fallback categoria_ten_id) para productos ya enlazados}
     ';
 
     /**
@@ -63,7 +63,7 @@ class StartFullSync extends Command
                 ]],
                 // 6. Importa stock desde TEN
                 ['cmd' => 'app:test-w-c-sync-stock', 'args' => ['--limit' => $limit]],
-                // 7. Linkea categorías-productos (rellena categoria_ten_id en productos)
+                // 7. Linkea categorías-productos (rellena categoria_ten_id y pivote producto_categorias_ten)
                 ['cmd' => 'app:test-wc-link-categories-products', 'args' => []],
                 // 8. Sincroniza categorías a Woo
                 ['cmd' => 'app:test-wc-sync-categories', 'args' => ['--only' => 'all', '--limit' => $limit]],

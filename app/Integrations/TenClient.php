@@ -473,6 +473,81 @@ class TenClient
         return (int) $categoria;
     }
 
+    /**
+     * POST /Query/Get
+     *
+     * Devuelve un mapa [IdNumero => Categoria] para un set de productos.
+     *
+     * @param array<int, int> $tenProductIds
+     * @return array<int, int|null>
+     */
+    public function getCategoriesFromProducts(array $tenProductIds): array
+    {
+        $empresaId = (int) config('services.ten.empresa_id', env('TEN_EMPRESA_ID'));
+
+        if ($empresaId <= 0) {
+            throw new RuntimeException('TEN_EMPRESA_ID no está configurado o es inválido.');
+        }
+
+        $ids = array_values(array_unique(array_filter($tenProductIds, static function ($v) {
+            return is_numeric($v) && (int) $v > 0;
+        })));
+
+        if (empty($ids)) {
+            return [];
+        }
+
+        $idList = implode(',', array_map('intval', $ids));
+        $query = "SELECT IdNumero, Categoria FROM tblProductos where IdEmpresa={$empresaId} and IdNumero IN ({$idList})";
+
+        $payload = [
+            'query' => $query,
+        ];
+
+        $url = $this->baseUrl . '/Query/Get';
+        $response = $this->http()->post($url, $payload);
+
+        if (! $response->successful()) {
+            Log::warning('TEN Query/Get (getCategoriesFromProducts) failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'payload' => $payload,
+            ]);
+
+            throw new RuntimeException("TEN Query/Get failed with HTTP {$response->status()}");
+        }
+
+        $rows = $this->extractListFromTenResponse($response->json(), ['Rows', 'rows', 'Data', 'data', 'Result', 'result']);
+
+        $map = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) continue;
+            $id = $row['IdNumero'] ?? $row['Id'] ?? null;
+            if (!is_numeric($id)) {
+                continue;
+            }
+            $id = (int) $id;
+            $categoria = $row['Categoria'] ?? null;
+            if ($categoria === null || $categoria === '') {
+                $map[$id] = null;
+                continue;
+            }
+            if (!is_numeric($categoria)) {
+                Log::warning('TEN Query/Get (getCategoriesFromProducts) Categoria no numérica', [
+                    'tenProductIdNumero' => $id,
+                    'categoria' => $categoria,
+                    'row' => $row,
+                ]);
+                $map[$id] = null;
+                continue;
+            }
+            $map[$id] = (int) $categoria;
+        }
+
+        return $map;
+    }
+
 
 
     /**

@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use App\Integrations\TenClient;
 use App\Integrations\Mappers\TenProductMapper;
+use App\Models\ProductoCategoriaTen;
 use App\Models\Producto;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -17,7 +18,7 @@ class ProdImportProductos extends Command
      *
      * @var string
      */
-    protected $signature = 'app:prod-import-productos {--modified-after=}';
+    protected $signature = 'app:prod-import-productos {--modified-after=} {--include-blocked : Incluir productos bloqueados} {--exclude-blocked : Excluir productos bloqueados}';
 
     /**
      * The console command description.
@@ -37,6 +38,10 @@ class ProdImportProductos extends Command
 
         $client = app(TenClient::class);
         $modifiedAfterOpt = $this->option('modified-after') ?? null;
+        $includeBlocked = true;
+        if ($this->option('exclude-blocked')) {
+            $includeBlocked = false;
+        }
         $modifiedAfter = null;
         if ($modifiedAfterOpt) {
             if ($modifiedAfterOpt === 'all') {
@@ -67,6 +72,10 @@ class ProdImportProductos extends Command
 
         $now = now();
         $rows = [];
+        $rowsRaw = [];
+        $tenIds = [];
+        $categoriaIdsByTenProductId = [];
+        $fallbackTenIds = [];
         $skippedNoTenId = 0;
         $skippedBlocked = 0;
         $skippedNoCategoria = 0;
@@ -75,10 +84,12 @@ class ProdImportProductos extends Command
         $dbCols = $this->dbColumns();
         $dbColsFlip = array_flip($dbCols);
 
+        $processed = 0;
         foreach ($tenProducts as $tenRow) {
+            $processed++;
             if (!is_array($tenRow)) continue;
             $attrs = TenProductMapper::toProductoAttributes($tenRow);
-            if (!empty($attrs['ten_bloqueado'])) {
+            if (!empty($attrs['ten_bloqueado']) && ! $includeBlocked) {
                 $skippedBlocked++;
                 continue;
             }
@@ -86,19 +97,78 @@ class ProdImportProductos extends Command
                 $skippedNoTenId++;
                 continue;
             }
+            $tenId = (int) $attrs['ten_id'];
+            $catIds = $this->extractCategoryIdsFromTenRow($tenRow);
+            $categoriaIdsByTenProductId[$tenId] = $catIds;
+            if (empty($catIds)) {
+                $fallbackTenIds[] = $tenId;
+            }
+            $rowsRaw[] = $attrs;
+            $tenIds[] = $tenId;
+            if (($processed % 500) === 0) {
+                $this->line("Mapeados base: {$processed}/{$totalFetched}");
+            }
+        }
+
+        // Fallback de categoria principal via /Query/Get para productos sin Categorias[] en /Products/Get
+        $categoriaByTenId = [];
+        $categoriaFallbackErrorTenId = [];
+        $tenIds = array_values(array_unique($tenIds));
+        $fallbackTenIds = array_values(array_unique($fallbackTenIds));
+        $catChunkSize = 200;
+        $this->info("Obteniendo categoria fallback TEN: " . count($fallbackTenIds) . " en chunks de {$catChunkSize}");
+        $catChunks = array_chunk($fallbackTenIds, $catChunkSize);
+        foreach ($catChunks as $i => $chunk) {
+            $chunkNum = $i + 1;
             try {
-                $catId = $client->getCategoryFromProduct((int) $attrs['ten_id']);
-                $attrs['categoria_ten_id'] = $catId;
-                if ($catId === null) {
-                    $skippedNoCategoria++;
+                $map = $client->getCategoriesFromProducts($chunk);
+                foreach ($map as $k => $v) {
+                    $categoriaByTenId[(int) $k] = $v;
                 }
             } catch (Throwable $e) {
-                $categoriaErrors++;
-                $attrs['categoria_ten_id'] = null;
-                Log::warning($marker . ' categoria fetch failed', [
-                    'ten_id' => $attrs['ten_id'] ?? null,
+                $categoriaErrors += count($chunk);
+                foreach ($chunk as $id) {
+                    $categoriaFallbackErrorTenId[(int) $id] = true;
+                }
+                Log::warning($marker . ' categoria batch failed', [
+                    'chunk' => $chunkNum,
+                    'chunk_size' => count($chunk),
                     'message' => $e->getMessage(),
                 ]);
+            }
+            if (($chunkNum % 5) === 0 || $chunkNum === count($catChunks)) {
+                $this->line("Categorias fallback TEN: chunk {$chunkNum}/" . count($catChunks));
+            }
+        }
+
+        $pivotRows = [];
+
+        foreach ($rowsRaw as $attrs) {
+            $tenId = (int) ($attrs['ten_id'] ?? 0);
+            $catIds = $categoriaIdsByTenProductId[$tenId] ?? [];
+            if (empty($catIds) && !isset($categoriaFallbackErrorTenId[$tenId])) {
+                $fallbackCat = $categoriaByTenId[$tenId] ?? null;
+                if (is_numeric($fallbackCat) && (int) $fallbackCat > 0) {
+                    $catIds = [(int) $fallbackCat];
+                }
+            }
+            $catIds = array_values(array_unique(array_filter($catIds, static fn ($v) => is_numeric($v) && (int) $v > 0)));
+
+            $primaryCatId = $catIds[0] ?? null;
+            $attrs['categoria_ten_id'] = $primaryCatId;
+            if ($primaryCatId === null) {
+                $skippedNoCategoria++;
+            }
+
+            foreach ($catIds as $idx => $catId) {
+                $pivotRows[] = [
+                    'producto_ten_id' => $tenId,
+                    'categoria_ten_id' => (int) $catId,
+                    'orden' => $idx,
+                    'is_primary' => $idx === 0,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
             }
             $attrs['woocommerce_id'] = null;
             $attrs['woocommerce_sku'] = null;
@@ -186,39 +256,48 @@ class ProdImportProductos extends Command
 
         $this->info("Insert: {$insertCount} | Update: {$updateCount} | Skip: {$skipCount} | Requeued(synced->pending): {$requeuedCount}");
         Log::info($marker . ' diff', compact('insertCount','updateCount','skipCount','requeuedCount'));
-        if (empty($toUpsert)) {
-            $this->info('Nada que insertar/actualizar.');
-            return self::SUCCESS;
+        $done = 0;
+        if (!empty($toUpsert)) {
+            $updateColumns = array_values(array_diff(array_keys($toUpsert[0]), ['ten_id', 'created_at']));
+            $colsPerRow = count($dbCols);
+            $maxPlaceholders = 60000;
+            $autoChunk = max(200, (int) floor($maxPlaceholders / max(1, $colsPerRow)));
+            $chunkSize = $autoChunk;
+            $this->info("Upsert en chunks: {$chunkSize} filas/chunk");
+            Log::info($marker . ' chunking', ['chunk_size' => $chunkSize, 'cols_per_row' => $colsPerRow]);
+            $total = count($toUpsert);
+            $chunks = array_chunk($toUpsert, $chunkSize);
+            $this->info("Total a escribir: {$total} | chunks: " . count($chunks));
+            foreach ($chunks as $i => $chunk) {
+                $chunkNum = $i + 1;
+                try {
+                    DB::transaction(function () use ($chunk, $updateColumns) {
+                        Producto::upsert($chunk, ['ten_id'], $updateColumns);
+                    });
+                } catch (\Throwable $e) {
+                    $this->error("Chunk {$chunkNum} falló: " . $e->getMessage());
+                    Log::error($marker . ' chunk failed', [
+                        'chunk' => $chunkNum,
+                        'chunk_size' => count($chunk),
+                        'message' => $e->getMessage(),
+                    ]);
+                    return self::FAILURE;
+                }
+                $done += count($chunk);
+                $this->line("OK chunk {$chunkNum}/" . count($chunks) . " | {$done}/{$total}");
+            }
+        } else {
+            $this->info('Nada que insertar/actualizar en productos (solo sync de categorías pivote).');
         }
 
-        $updateColumns = array_values(array_diff(array_keys($toUpsert[0]), ['ten_id', 'created_at']));
-        $colsPerRow = count($dbCols);
-        $maxPlaceholders = 60000;
-        $autoChunk = max(200, (int) floor($maxPlaceholders / max(1, $colsPerRow)));
-        $chunkSize = $autoChunk;
-        $this->info("Upsert en chunks: {$chunkSize} filas/chunk");
-        Log::info($marker . ' chunking', ['chunk_size' => $chunkSize, 'cols_per_row' => $colsPerRow]);
-        $total = count($toUpsert);
-        $chunks = array_chunk($toUpsert, $chunkSize);
-        $this->info("Total a escribir: {$total} | chunks: " . count($chunks));
-        $done = 0;
-        foreach ($chunks as $i => $chunk) {
-            $chunkNum = $i + 1;
-            try {
-                DB::transaction(function () use ($chunk, $updateColumns) {
-                    Producto::upsert($chunk, ['ten_id'], $updateColumns);
-                });
-            } catch (\Throwable $e) {
-                $this->error("Chunk {$chunkNum} falló: " . $e->getMessage());
-                Log::error($marker . ' chunk failed', [
-                    'chunk' => $chunkNum,
-                    'chunk_size' => count($chunk),
-                    'message' => $e->getMessage(),
-                ]);
-                return self::FAILURE;
-            }
-            $done += count($chunk);
-            $this->line("OK chunk {$chunkNum}/" . count($chunks) . " | {$done}/{$total}");
+        try {
+            $syncedPivotRows = $this->syncPivotCategories($tenIds, $pivotRows);
+            $this->info("Categorías pivote sincronizadas: {$syncedPivotRows} filas.");
+            Log::info($marker . ' pivot synced', ['rows' => $syncedPivotRows, 'products' => count($tenIds)]);
+        } catch (Throwable $e) {
+            $this->error('Error sincronizando pivote producto-categorías: ' . $e->getMessage());
+            Log::error($marker . ' pivot sync failed', ['message' => $e->getMessage()]);
+            return self::FAILURE;
         }
         $this->info("OK: import completado ({$done} escritos).");
         Log::info($marker . ' success', ['written' => $done]);
@@ -260,5 +339,78 @@ class ProdImportProductos extends Command
             'updated_at',
             'deleted_at',
         ];
+    }
+
+    /**
+     * @param array<string,mixed> $tenRow
+     * @return array<int,int>
+     */
+    private function extractCategoryIdsFromTenRow(array $tenRow): array
+    {
+        $raw = $tenRow['Categorias'] ?? null;
+        if (!is_array($raw)) {
+            return [];
+        }
+
+        $ids = [];
+        foreach ($raw as $item) {
+            $candidate = null;
+            if (is_array($item)) {
+                $candidate = $item['IdCategoria'] ?? $item['Id'] ?? $item['id'] ?? null;
+            } else {
+                $candidate = $item;
+            }
+            if (is_numeric($candidate) && (int) $candidate > 0) {
+                $ids[] = (int) $candidate;
+            }
+        }
+
+        return array_values(array_unique($ids));
+    }
+
+    /**
+     * @param array<int,int> $tenIds
+     * @param array<int,array<string,mixed>> $pivotRows
+     */
+    private function syncPivotCategories(array $tenIds, array $pivotRows): int
+    {
+        $tenIds = array_values(array_unique(array_filter($tenIds, static fn ($v) => is_numeric($v) && (int) $v > 0)));
+
+        if (!empty($tenIds)) {
+            foreach (array_chunk($tenIds, 1000) as $idsChunk) {
+                ProductoCategoriaTen::query()
+                    ->whereIn('producto_ten_id', $idsChunk)
+                    ->delete();
+            }
+        }
+
+        if (empty($pivotRows)) {
+            return 0;
+        }
+
+        $dedup = [];
+        foreach ($pivotRows as $row) {
+            $productTenId = (int) ($row['producto_ten_id'] ?? 0);
+            $catTenId = (int) ($row['categoria_ten_id'] ?? 0);
+            if ($productTenId <= 0 || $catTenId <= 0) {
+                continue;
+            }
+            $key = $productTenId . ':' . $catTenId;
+            $dedup[$key] = $row;
+        }
+        $rows = array_values($dedup);
+        if (empty($rows)) {
+            return 0;
+        }
+
+        foreach (array_chunk($rows, 1000) as $chunk) {
+            ProductoCategoriaTen::query()->upsert(
+                $chunk,
+                ['producto_ten_id', 'categoria_ten_id'],
+                ['orden', 'is_primary', 'updated_at']
+            );
+        }
+
+        return count($rows);
     }
 }
