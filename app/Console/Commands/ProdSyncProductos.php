@@ -22,6 +22,11 @@ class ProdSyncProductos extends Command
         {--full-category-validation : Valida categorías para todos los productos enlazados en Woo}
         {--full-brand-sync : Fuerza sincronización de marca para todos los productos enlazados}
         {--brand-batch-size=100 : Tamaño del batch para sync masivo de marcas (1-100)}
+        {--skip-fabricantes-sync : Omitir pre-sync de fabricantes TEN->BD->Woo}
+        {--skip-stocks-sync : Omitir pre-sync de stocks TEN->BD->Woo}
+        {--skip-stock-proveedores-sync : Omitir pre-sync de stock por proveedores (CSV)}
+        {--stocks-chunk-size=1000 : Chunk size para pre-sync de stocks}
+        {--stocks-batch-size=100 : Batch size Woo para pre-sync de stocks}
     ';
 
     /**
@@ -52,6 +57,53 @@ class ProdSyncProductos extends Command
         $fullCategoryValidation = (bool) $this->option('full-category-validation');
         $fullBrandSync = (bool) $this->option('full-brand-sync');
         $brandBatchSize = max(1, min(100, (int) $this->option('brand-batch-size')));
+        $skipFabricantesSync = (bool) $this->option('skip-fabricantes-sync');
+        $skipStocksSync = (bool) $this->option('skip-stocks-sync');
+        $skipStockProveedoresSync = (bool) $this->option('skip-stock-proveedores-sync');
+        $stocksChunkSize = max(100, (int) $this->option('stocks-chunk-size'));
+        $stocksBatchSize = max(1, min(100, (int) $this->option('stocks-batch-size')));
+
+        // Paso 0.1: refrescar fabricantes TEN -> BD -> Woo
+        if (!$skipFabricantesSync) {
+            $this->info('Sincronizando fabricantes antes de productos...');
+            $fabricantesExit = $this->call('app:prod-sync-fabricantes');
+            if ($fabricantesExit !== self::SUCCESS) {
+                $this->error('Falló el sync de fabricantes. Se aborta sync de productos.');
+                Log::error($marker . ' pre-sync fabricantes failed', ['exit_code' => $fabricantesExit]);
+                return self::FAILURE;
+            }
+        } else {
+            $this->line('Pre-sync fabricantes omitido por flag.');
+        }
+
+        // Paso 0.2: refrescar stocks TEN -> BD -> Woo (versión chunk/batch)
+        if (!$skipStocksSync) {
+            $this->info('Sincronizando stocks antes de productos...');
+            $stocksExit = $this->call('app:prod-sync-stocks', [
+                '--chunk-size' => $stocksChunkSize,
+                '--batch-size' => $stocksBatchSize,
+            ]);
+            if ($stocksExit !== self::SUCCESS) {
+                $this->error('Falló el sync de stocks. Se aborta sync de productos.');
+                Log::error($marker . ' pre-sync stocks failed', ['exit_code' => $stocksExit]);
+                return self::FAILURE;
+            }
+        } else {
+            $this->line('Pre-sync stocks omitido por flag.');
+        }
+
+        // Paso 0.3: sync stock por proveedores (CSV -> Woo), tras el stock normal
+        if (!$skipStockProveedoresSync) {
+            $this->info('Sincronizando stock por proveedores después del stock normal...');
+            $stockProveedoresExit = $this->call('app:prod-sync-stock-proveedores');
+            if ($stockProveedoresExit !== self::SUCCESS) {
+                $this->error('Falló el sync de stock por proveedores. Se aborta sync de productos.');
+                Log::error($marker . ' pre-sync stock proveedores failed', ['exit_code' => $stockProveedoresExit]);
+                return self::FAILURE;
+            }
+        } else {
+            $this->line('Pre-sync stock proveedores omitido por flag.');
+        }
 
         $pendingQuery = Producto::query()
             ->where('sync_status', 'pending')
