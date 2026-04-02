@@ -570,4 +570,27 @@ class TenClient
 
         return $this->extractListFromTenResponse($response->json(), ['Stocks', 'stocks']);           
     }
+
+    /**
+     * POST /Manufacturers/Get
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function getManufacturers(): array
+    {
+        $url = $this->baseUrl . '/Manufacturers/Get';
+        $response = $this->http()->post($url);
+
+        if (! $response->successful()) {
+            Log::warning('TEN Manufacturers/Get failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+
+            throw new RuntimeException("TEN Manufacturers/Get failed with HTTP {$response->status()}");
+        }
+
+        return $this->extractListFromTenResponse($response->json(), ['Manufacturers', 'manufacturers']);
+    }
 }

@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use App\Integrations\WooCommerceClient;
 use App\Models\Categoria;
+use App\Models\Fabricante;
 use App\Models\ProductoCategoriaTen;
 use App\Models\Producto;
 use Illuminate\Support\Facades\Log;
@@ -17,7 +18,11 @@ class ProdSyncProductos extends Command
      *
      * @var string
      */
-    protected $signature = 'app:prod-sync-productos';
+    protected $signature = 'app:prod-sync-productos
+        {--full-category-validation : Valida categorías para todos los productos enlazados en Woo}
+        {--full-brand-sync : Fuerza sincronización de marca para todos los productos enlazados}
+        {--brand-batch-size=100 : Tamaño del batch para sync masivo de marcas (1-100)}
+    ';
 
     /**
      * The console command description.
@@ -44,6 +49,10 @@ class ProdSyncProductos extends Command
             return self::FAILURE;
         }
 
+        $fullCategoryValidation = (bool) $this->option('full-category-validation');
+        $fullBrandSync = (bool) $this->option('full-brand-sync');
+        $brandBatchSize = max(1, min(100, (int) $this->option('brand-batch-size')));
+
         $pendingQuery = Producto::query()
             ->where('sync_status', 'pending')
             ->orderBy('id');
@@ -62,6 +71,7 @@ class ProdSyncProductos extends Command
             $skipped = 0;
             $errors = 0;
             $processedSync = 0;
+            $syncedTenIds = [];
             $pendingQuery->chunkById(200, function ($productos) use (
                 $client,
                 $marker,
@@ -72,7 +82,8 @@ class ProdSyncProductos extends Command
                 &$created,
                 &$updated,
                 &$skipped,
-                &$errors
+                &$errors,
+                &$syncedTenIds
             ) {
                 foreach ($productos as $p) {
                     $processedSync++;
@@ -115,6 +126,7 @@ class ProdSyncProductos extends Command
                             $p->save();
                             $updated++;
                             $synced++;
+                            $syncedTenIds[] = (int) $p->ten_id;
                             $this->line("[{$p->ten_id}] UPDATE Woo #{$wcId} sku={$wcSku}{$progress}");
                             continue;
                         }
@@ -143,6 +155,7 @@ class ProdSyncProductos extends Command
                             $linked++;
                             $updated++;
                             $synced++;
+                            $syncedTenIds[] = (int) $p->ten_id;
                             $this->line("[{$p->ten_id}] LINK Woo #{$wcId} sku={$wcSku}{$progress}");
                             continue;
                         }
@@ -160,6 +173,7 @@ class ProdSyncProductos extends Command
                         $p->save();
                         $created++;
                         $synced++;
+                        $syncedTenIds[] = (int) $p->ten_id;
                         $this->line("[{$p->ten_id}] CREATE Woo #{$wcId} sku={$wcSku}{$progress}");
                     } catch (Throwable $e) {
                         $errors++;
@@ -174,9 +188,29 @@ class ProdSyncProductos extends Command
             });
             $this->info("OK fin. synced={$synced} | created={$created} | linked={$linked} | updated={$updated} | errors={$errors}");
             Log::info($marker . ' done', compact('synced','created','linked','updated','errors'));
+
+            $syncedTenIds = array_values(array_unique(array_filter($syncedTenIds, static fn ($id) => $id > 0)));
+        } else {
+            $syncedTenIds = [];
         }
 
-        $this->info("Validando categorías de productos en Woo...");
+        $brandSweepErrors = 0;
+        if ($fullBrandSync) {
+            $brandResult = $this->runFullBrandSync($client, $marker, $brandBatchSize);
+            $brandSweepErrors = (int) ($brandResult['errors'] ?? 0);
+        }
+
+        if (!$fullCategoryValidation && empty($syncedTenIds)) {
+            $this->info('Validación de categorías omitida: no hubo productos sincronizados en esta ejecución.');
+            Log::info($marker . ' category validation skipped (no synced products)');
+            return $brandSweepErrors > 0 ? self::FAILURE : self::SUCCESS;
+        }
+
+        $this->info(
+            $fullCategoryValidation
+                ? 'Validando categorías de productos en Woo (modo completo)...'
+                : 'Validando categorías de productos en Woo (solo sincronizados en esta ejecución)...'
+        );
         static $catWooByTenId = null;
         if ($catWooByTenId === null) {
             $catWooByTenId = Categoria::query()
@@ -190,7 +224,15 @@ class ProdSyncProductos extends Command
             ->whereNotNull('woocommerce_id')
             ->where('woocommerce_id', '!=', '')
             ->orderBy('id');
+        if (!$fullCategoryValidation) {
+            $productosTodosQuery->whereIn('ten_id', $syncedTenIds);
+        }
         $totalValidacion = (clone $productosTodosQuery)->count();
+        if ($totalValidacion === 0) {
+            $this->info('Validación de categorías finalizada (0 productos a validar).');
+            Log::info($marker . ' category validation done', ['count' => 0, 'full' => $fullCategoryValidation]);
+            return self::SUCCESS;
+        }
         $processedValidacion = 0;
         $productosTodosQuery->chunkById(200, function ($productos) use (
             $client,
@@ -235,7 +277,138 @@ class ProdSyncProductos extends Command
         });
         $this->info("Validación de categorías finalizada.");
 
-        return self::SUCCESS;
+        return $brandSweepErrors > 0 ? self::FAILURE : self::SUCCESS;
+    }
+
+    /**
+     * @return array{updated:int,same:int,skipped_no_mapping:int,errors:int}
+     */
+    private function runFullBrandSync(WooCommerceClient $client, string $marker, int $batchSize): array
+    {
+        $this->info("Sincronizando marcas en modo completo (batch={$batchSize})...");
+
+        $wooBrandByTenFabricanteId = Fabricante::query()
+            ->whereNotNull('woocommerce_marca_id')
+            ->pluck('woocommerce_marca_id', 'ten_id_numero')
+            ->map(static fn ($v) => (int) $v)
+            ->all();
+
+        if (empty($wooBrandByTenFabricanteId)) {
+            $this->warn('Sync de marcas completo omitido: no hay fabricantes mapeados con Woo.');
+            Log::warning($marker . ' full brand sync skipped', ['reason' => 'empty brand map']);
+            return ['updated' => 0, 'same' => 0, 'skipped_no_mapping' => 0, 'errors' => 0];
+        }
+
+        $baseQuery = Producto::query()
+            ->whereNotNull('woocommerce_id')
+            ->where('woocommerce_id', '!=', '')
+            ->whereNotNull('ten_fabricante')
+            ->where('ten_fabricante', '>', 0);
+        $totalWithFabricante = (clone $baseQuery)->count();
+
+        $mappedTenFabricantes = array_values(array_unique(array_keys($wooBrandByTenFabricanteId)));
+        $query = (clone $baseQuery)
+            ->whereIn('ten_fabricante', $mappedTenFabricantes)
+            ->orderBy('id');
+        $total = (clone $query)->count();
+        $skippedNoMapping = max(0, $totalWithFabricante - $total);
+        if ($total === 0) {
+            $this->info('Sync de marcas completo: 0 productos candidatos.');
+            return ['updated' => 0, 'same' => 0, 'skipped_no_mapping' => $skippedNoMapping, 'errors' => 0];
+        }
+
+        $updated = 0;
+        $errors = 0;
+        $processed = 0;
+        $batchOk = 0;
+        $pendingBatch = [];
+
+        $flushBatch = function () use (
+            $client,
+            $marker,
+            &$pendingBatch,
+            &$updated,
+            &$errors,
+            &$batchOk
+        ): void {
+            if (empty($pendingBatch)) {
+                return;
+            }
+
+            try {
+                // En modo masivo de marcas no necesitamos parsear respuesta completa,
+                // evitando cargar miles de objetos de producto en memoria.
+                $client->updateProductosBatch($pendingBatch, false);
+                $updated += count($pendingBatch);
+                $batchOk++;
+            } catch (Throwable $e) {
+                $errors += count($pendingBatch);
+                Log::error($marker . ' full brand batch failed', [
+                    'batch_size' => count($pendingBatch),
+                    'error' => $e->getMessage(),
+                ]);
+                $this->warn('ERROR batch marcas: ' . $e->getMessage());
+            }
+
+            $pendingBatch = [];
+            if (function_exists('gc_collect_cycles')) {
+                gc_collect_cycles();
+            }
+        };
+
+        $query->chunkById(500, function ($productos) use (
+            $client,
+            $marker,
+            $wooBrandByTenFabricanteId,
+            $total,
+            $batchSize,
+            &$processed,
+            &$updated,
+            &$errors
+            ,
+            &$pendingBatch,
+            &$flushBatch
+        ) {
+            foreach ($productos as $p) {
+                /** @var Producto $p */
+                $processed++;
+                $wooId = (int) ($p->woocommerce_id ?? 0);
+                $tenFabricanteId = (int) ($p->ten_fabricante ?? 0);
+                if ($wooId <= 0 || $tenFabricanteId <= 0) {
+                    continue;
+                }
+
+                $expectedBrandId = (int) ($wooBrandByTenFabricanteId[$tenFabricanteId] ?? 0);
+                if ($expectedBrandId <= 0) {
+                    continue;
+                }
+
+                $pendingBatch[] = [
+                    'id' => $wooId,
+                    'brands' => [['id' => $expectedBrandId]],
+                ];
+
+                if (count($pendingBatch) >= $batchSize) {
+                    $flushBatch();
+                }
+
+                if (($processed % 500) === 0 || $processed === $total) {
+                    $this->line("Sync marcas: {$processed}/{$total}");
+                }
+            }
+        });
+
+        $flushBatch();
+
+        $this->info("Sync marcas completo finalizado. updated={$updated} | batches_ok={$batchOk} | skipped_no_mapping={$skippedNoMapping} | errors={$errors}");
+        Log::info($marker . ' full brand sync done', compact('updated', 'batchOk', 'skippedNoMapping', 'errors'));
+
+        return [
+            'updated' => $updated,
+            'same' => 0,
+            'skipped_no_mapping' => $skippedNoMapping,
+            'errors' => $errors,
+        ];
     }
 
     private function toWooPayload(Producto $p): array
@@ -275,6 +448,22 @@ class ProdSyncProductos extends Command
         if (!empty($wooCatIds)) {
             $payload['categories'] = array_map(static fn ($id) => ['id' => $id], $wooCatIds);
         }
+
+        // Marca Woo desde fabricante TEN (ten_fabricante -> fabricantes.ten_id_numero -> woocommerce_marca_id)
+        static $wooBrandByTenFabricanteId = null;
+        if ($wooBrandByTenFabricanteId === null) {
+            $wooBrandByTenFabricanteId = Fabricante::query()
+                ->whereNotNull('woocommerce_marca_id')
+                ->pluck('woocommerce_marca_id', 'ten_id_numero')
+                ->map(static fn ($v) => (int) $v)
+                ->all();
+        }
+        $tenFabricanteId = (int) ($p->ten_fabricante ?? 0);
+        $wooBrandId = (int) ($wooBrandByTenFabricanteId[$tenFabricanteId] ?? 0);
+        if ($wooBrandId > 0) {
+            $payload['brands'] = [['id' => $wooBrandId]];
+        }
+
         return array_filter($payload, fn($v) => $v !== null);
     }
 

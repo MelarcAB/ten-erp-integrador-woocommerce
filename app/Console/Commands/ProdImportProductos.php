@@ -75,6 +75,7 @@ class ProdImportProductos extends Command
         $rowsRaw = [];
         $tenIds = [];
         $categoriaIdsByTenProductId = [];
+        $categoryIdsByTenId = [];
         $fallbackTenIds = [];
         $skippedNoTenId = 0;
         $skippedBlocked = 0;
@@ -153,6 +154,7 @@ class ProdImportProductos extends Command
                 }
             }
             $catIds = array_values(array_unique(array_filter($catIds, static fn ($v) => is_numeric($v) && (int) $v > 0)));
+            $categoryIdsByTenId[$tenId] = $catIds;
 
             $primaryCatId = $catIds[0] ?? null;
             $attrs['categoria_ten_id'] = $primaryCatId;
@@ -210,6 +212,8 @@ class ProdImportProductos extends Command
 
         // Buscar existentes
         $tenIds = array_map(fn($r) => (int)$r['ten_id'], $rows);
+        $incomingCategoryFingerprintByTenId = $this->buildIncomingCategoryFingerprints($categoryIdsByTenId, $tenIds);
+        $existingCategoryFingerprintByTenId = $this->loadExistingCategoryFingerprints($tenIds);
         $existing = [];
         foreach (array_chunk($tenIds, 1000) as $idsChunk) {
             $dbRows = Producto::query()
@@ -229,10 +233,13 @@ class ProdImportProductos extends Command
         $updateCount = 0;
         $skipCount = 0;
         $requeuedCount = 0;
+        $categoryChangedCount = 0;
+        $categoryOnlyUpdateCount = 0;
 
         foreach ($rows as $r) {
             $id = (int)$r['ten_id'];
             $newHash = (string)$r['ten_hash'];
+            $categoriesChanged = ($incomingCategoryFingerprintByTenId[$id] ?? '') !== ($existingCategoryFingerprintByTenId[$id] ?? '');
             if (!isset($existing[$id])) {
                 $toUpsert[] = $r;
                 $insertCount++;
@@ -240,22 +247,44 @@ class ProdImportProductos extends Command
             }
             $oldHash = $existing[$id]['ten_hash'];
             $oldStatus = $existing[$id]['sync_status'];
-            if ($oldHash === $newHash) {
+            if ($oldHash === $newHash && !$categoriesChanged) {
                 $skipCount++;
                 continue;
             }
+
+            if ($categoriesChanged) {
+                $categoryChangedCount++;
+                if ($oldHash === $newHash) {
+                    $categoryOnlyUpdateCount++;
+                }
+            }
+
             if ($oldStatus === 'synced') {
-                $r['sync_status'] = 'pending';
                 $requeuedCount++;
-            } else {
-                $r['sync_status'] = 'pending';
+            }
+
+            $r['sync_status'] = 'pending';
+            if ($oldStatus === 'synced') {
+                $r['last_error'] = null;
             }
             $toUpsert[] = $r;
             $updateCount++;
         }
 
-        $this->info("Insert: {$insertCount} | Update: {$updateCount} | Skip: {$skipCount} | Requeued(synced->pending): {$requeuedCount}");
-        Log::info($marker . ' diff', compact('insertCount','updateCount','skipCount','requeuedCount'));
+        $this->info(
+            "Insert: {$insertCount} | Update: {$updateCount} | Skip: {$skipCount}"
+            . " | Requeued(synced->pending): {$requeuedCount}"
+            . " | CatChanged: {$categoryChangedCount}"
+            . " | CatOnly: {$categoryOnlyUpdateCount}"
+        );
+        Log::info($marker . ' diff', compact(
+            'insertCount',
+            'updateCount',
+            'skipCount',
+            'requeuedCount',
+            'categoryChangedCount',
+            'categoryOnlyUpdateCount'
+        ));
         $done = 0;
         if (!empty($toUpsert)) {
             $updateColumns = array_values(array_diff(array_keys($toUpsert[0]), ['ten_id', 'created_at']));
@@ -302,6 +331,78 @@ class ProdImportProductos extends Command
         $this->info("OK: import completado ({$done} escritos).");
         Log::info($marker . ' success', ['written' => $done]);
         return self::SUCCESS;
+    }
+
+    /**
+     * @param array<int, array<int, int>> $categoryIdsByTenId
+     * @param array<int, int> $tenIds
+     * @return array<int, string>
+     */
+    private function buildIncomingCategoryFingerprints(array $categoryIdsByTenId, array $tenIds): array
+    {
+        $fingerprints = [];
+        foreach ($tenIds as $tenId) {
+            $id = (int) $tenId;
+            if ($id <= 0) {
+                continue;
+            }
+            $fingerprints[$id] = $this->categoryFingerprint($categoryIdsByTenId[$id] ?? []);
+        }
+
+        return $fingerprints;
+    }
+
+    /**
+     * @param array<int, int> $tenIds
+     * @return array<int, string>
+     */
+    private function loadExistingCategoryFingerprints(array $tenIds): array
+    {
+        $tenIds = array_values(array_unique(array_filter($tenIds, static fn ($v) => is_numeric($v) && (int) $v > 0)));
+        if (empty($tenIds)) {
+            return [];
+        }
+
+        $byProduct = [];
+        foreach (array_chunk($tenIds, 1000) as $idsChunk) {
+            $rows = ProductoCategoriaTen::query()
+                ->whereIn('producto_ten_id', $idsChunk)
+                ->orderBy('producto_ten_id')
+                ->orderBy('orden')
+                ->get(['producto_ten_id', 'categoria_ten_id']);
+
+            foreach ($rows as $row) {
+                $productTenId = (int) ($row->producto_ten_id ?? 0);
+                $categoryTenId = (int) ($row->categoria_ten_id ?? 0);
+                if ($productTenId <= 0 || $categoryTenId <= 0) {
+                    continue;
+                }
+                if (!isset($byProduct[$productTenId])) {
+                    $byProduct[$productTenId] = [];
+                }
+                $byProduct[$productTenId][] = $categoryTenId;
+            }
+        }
+
+        $fingerprints = [];
+        foreach ($tenIds as $tenId) {
+            $id = (int) $tenId;
+            $fingerprints[$id] = $this->categoryFingerprint($byProduct[$id] ?? []);
+        }
+
+        return $fingerprints;
+    }
+
+    /**
+     * @param array<int, mixed> $categoryIds
+     */
+    private function categoryFingerprint(array $categoryIds): string
+    {
+        $ids = array_map(static fn ($v) => (int) $v, $categoryIds);
+        $ids = array_values(array_unique(array_filter($ids, static fn ($v) => $v > 0)));
+        sort($ids);
+
+        return implode('|', $ids);
     }
 
     private function dbColumns(): array

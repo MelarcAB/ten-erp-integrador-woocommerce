@@ -657,42 +657,122 @@ class WooCommerceClient
     }
 
     /**
-     * @param array<int,array<string,mixed>> $updates
-     * @return array<string,mixed>
+     * GET /products/brands
+     *
+     * @return array<int, array<string, mixed>>
      */
-    public function updateProductosBatch(array $updates): array
+    public function getMarcasProductos(int $perPage = 100, int $page = 1, array $params = []): array
     {
-        // Si tu client ya tiene un método genérico request(), úsalo.
-        // Aquí lo dejo “directo” para que lo adaptes a tu base.
-        $payload = ['update' => array_values($updates)];
+        $perPage = max(1, min(100, $perPage));
+        $page    = max(1, $page);
 
-        $res = $this->request('post', '/products/batch', $payload);
+        $query = array_merge([
+            'per_page' => $perPage,
+            'page'     => $page,
+        ], $params);
 
-        return is_array($res) ? $res : [];
+        $url = $this->baseUrl . '/products/brands';
+        $response = $this->http()->get($url, $query);
+
+        if (! $response->successful()) {
+            Log::warning('WC product brands GET failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'query' => $query,
+            ]);
+
+            throw new RuntimeException("WC product brands GET failed with HTTP {$response->status()}");
+        }
+
+        $json = $response->json();
+        if (is_array($json) && array_is_list($json)) {
+            return $json;
+        }
+
+        Log::warning('WC product brands GET unexpected response shape', [
+            'url' => $url,
+            'query' => $query,
+            'json' => $json,
+        ]);
+
+        throw new RuntimeException('WC product brands GET returned an unexpected response shape');
     }
 
     /**
-     * Ejemplo de request wrapper (ajústalo al tuyo).
-     * Debe llamar a /wp-json/wc/v3 + auth con ck/cs o basic, lo que uses.
+     * POST /products/brands
      *
-     * @return array<string,mixed>|array<int,mixed>|null
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
      */
-    private function request(string $method, string $path, array $json = []): array|null
+    public function createMarcaProducto(array $payload): array
     {
-        // EJEMPLO: si tu auth es por querystring consumer_key/secret
-        $base = rtrim(config('services.woocommerce.base_url'), '/'); // o env('WC_BASE_URL')
-        $url = $base . $path;
+        $url = $this->baseUrl . '/products/brands';
+        $response = $this->http()->post($url, $payload);
 
-        $ck = config('services.woocommerce.client_key');
-        $cs = config('services.woocommerce.client_secret');
+        if (! $response->successful()) {
+            Log::warning('WC product brand POST failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'payload' => $payload,
+            ]);
 
-        $http = Http::timeout(60)->acceptJson();
+            throw new RuntimeException("WC product brand POST failed with HTTP {$response->status()}");
+        }
 
-        $resp = $http->{$method}($url, $json + [
-            // si tu API usa query params, esto NO es así (depende de tu implementación)
+        $json = $response->json();
+        if (is_array($json) && !array_is_list($json)) {
+            return $json;
+        }
+
+        Log::warning('WC product brand POST unexpected response shape', [
+            'url' => $url,
+            'json' => $json,
         ]);
 
-        // Si tu client actual ya lo hace bien, ignora este wrapper y pega el método batch al estilo del tuyo.
-        return $resp->successful() ? $resp->json() : null;
+        throw new RuntimeException('WC product brand POST returned an unexpected response shape');
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $updates
+     * @return array<string,mixed>
+     */
+    public function updateProductosBatch(array $updates, bool $parseResponse = true): array
+    {
+        if (empty($updates)) {
+            return ['update' => []];
+        }
+
+        $payload = ['update' => array_values($updates)];
+        $url = $this->baseUrl . '/products/batch';
+        $response = $this->http()->post($url, $payload);
+
+        if (! $response->successful()) {
+            Log::warning('WC products batch POST failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'payload_count' => count($updates),
+            ]);
+
+            throw new RuntimeException("WC products batch POST failed with HTTP {$response->status()}");
+        }
+
+        if (! $parseResponse) {
+            return ['ok' => true, 'status' => $response->status(), 'count' => count($updates)];
+        }
+
+        $json = $response->json();
+        if (is_array($json)) {
+            return $json;
+        }
+
+        Log::warning('WC products batch POST unexpected response shape', [
+            'url' => $url,
+            'json' => $json,
+        ]);
+
+        throw new RuntimeException('WC products batch POST returned an unexpected response shape');
     }
 }
