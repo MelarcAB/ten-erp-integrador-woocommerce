@@ -19,6 +19,7 @@ class ProdSyncProductos extends Command
      * @var string
      */
     protected $signature = 'app:prod-sync-productos
+        {--skip-ten-import : Omitir import de productos desde TEN antes del sync}
         {--full-category-validation : Valida categorías para todos los productos enlazados en Woo}
         {--full-brand-sync : Fuerza sincronización de marca para todos los productos enlazados}
         {--brand-batch-size=100 : Tamaño del batch para sync masivo de marcas (1-100)}
@@ -45,13 +46,19 @@ class ProdSyncProductos extends Command
         $this->line($marker . ' start');
         Log::info($marker . ' start');
 
+        $skipTenImport = (bool) $this->option('skip-ten-import');
+
         // Paso 0: refrescar productos desde TEN (nuevos/cambios => pending)
-        $this->info('Refrescando productos desde TEN antes de sincronizar...');
-        $importExit = $this->call('app:prod-import-productos');
-        if ($importExit !== self::SUCCESS) {
-            $this->error('Falló el import de productos desde TEN. Se aborta sync.');
-            Log::error($marker . ' pre-sync import failed', ['exit_code' => $importExit]);
-            return self::FAILURE;
+        if (!$skipTenImport) {
+            $this->info('Refrescando productos desde TEN antes de sincronizar...');
+            $importExit = $this->call('app:prod-import-productos');
+            if ($importExit !== self::SUCCESS) {
+                $this->error('Falló el import de productos desde TEN. Se aborta sync.');
+                Log::error($marker . ' pre-sync import failed', ['exit_code' => $importExit]);
+                return self::FAILURE;
+            }
+        } else {
+            $this->line('Import de productos TEN omitido por flag.');
         }
 
         $fullCategoryValidation = (bool) $this->option('full-category-validation');

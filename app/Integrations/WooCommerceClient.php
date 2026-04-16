@@ -421,7 +421,7 @@ class WooCommerceClient
      * @param array<string, mixed> $payload
      * @return array<string, mixed>
      */
-    public function updateProducto(int $id, array $payload): array
+    public function updateProducto(int $id, array $payload, bool $parseResponse = true): array
     {
         $url = $this->baseUrl . '/products/' . $id;
 
@@ -431,11 +431,18 @@ class WooCommerceClient
             Log::warning('WC product PUT failed', [
                 'url' => $url,
                 'status' => $response->status(),
-                'body' => $response->body(),
                 'payload' => $payload,
             ]);
 
             throw new RuntimeException("WC product PUT failed with HTTP {$response->status()}");
+        }
+
+        if (! $parseResponse) {
+            return [
+                'ok' => true,
+                'status' => $response->status(),
+                'id' => $id,
+            ];
         }
 
         $json = $response->json();
@@ -752,7 +759,6 @@ class WooCommerceClient
             Log::warning('WC products batch POST failed', [
                 'url' => $url,
                 'status' => $response->status(),
-                'body' => $response->body(),
                 'payload_count' => count($updates),
             ]);
 

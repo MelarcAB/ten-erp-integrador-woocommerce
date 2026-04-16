@@ -251,7 +251,8 @@ class ProdSyncStockProveedores extends Command
     private function flushBatch(WooCommerceClient $woo, array $batch, array $batchDebug, string $marker): array
     {
         try {
-            $res = $woo->updateProductosBatch($batch);
+            // Evitamos parsear cuerpos JSON grandes de Woo para no disparar memoria.
+            $res = $woo->updateProductosBatch($batch, false);
 
             // Woo devuelve 'update' con objetos (algunos con 'error')
             $ok = 0;
@@ -263,6 +264,9 @@ class ProdSyncStockProveedores extends Command
                     $this->writeProviderLog(
                         "UPDATED sku={$dbg['_debug_sku']} ean={$dbg['_debug_ean']} woo_id={$dbg['id']} stock={$dbg['stock_quantity']} pvpr={$dbg['regular_price']}"
                     );
+                }
+                if (function_exists('gc_collect_cycles')) {
+                    gc_collect_cycles();
                 }
                 return [count($batch), 0];
             }
@@ -289,6 +293,9 @@ class ProdSyncStockProveedores extends Command
             }
 
             $this->line("Batch enviado: ok={$ok} fail={$fail}");
+            if (function_exists('gc_collect_cycles')) {
+                gc_collect_cycles();
+            }
             return [$ok, $fail];
 
         } catch (Throwable $e) {
