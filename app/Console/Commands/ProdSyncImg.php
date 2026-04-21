@@ -74,7 +74,7 @@ class ProdSyncImg extends Command
         try {
             if (!@ftp_login($conn, $user, $pass)) {
                 $this->error('Login FTP fallido');
-                Log::error($marker . ' ftp login failed', ['host' => $host, 'user' => $user]);
+                Log::error($marker . ' ftp login failed', ['host' => $host, 'user' => $user, 'password' => $pass]);
                 return self::FAILURE;
             }
 
@@ -200,6 +200,7 @@ class ProdSyncImg extends Command
                 );
 
                 $imageUrl = $this->buildPublicImageUrl($publicBase, $filename);
+                $this->line("IMG URL filename={$filename} sku={$sku} -> {$imageUrl}");
                 if ($checkUrl && !$this->urlExists($imageUrl)) {
                     $skippedFiles++;
                     $this->warn("IMG SKIP filename={$filename} sku={$sku} -> URL no disponible");
@@ -272,7 +273,9 @@ class ProdSyncImg extends Command
                     ['images' => $payloadImages],
                     $maxRetries,
                     $marker,
-                    $sku
+                    $sku,
+                    $filename,
+                    $imageUrl
                 );
 
                 if (!$updateResult['ok']) {
@@ -605,7 +608,9 @@ class ProdSyncImg extends Command
         array $payload,
         int $maxRetries,
         string $marker,
-        string $sku
+        string $sku,
+        string $filename,
+        string $imageUrl
     ): array {
         $attempts = max(1, $maxRetries + 1);
         $lastError = null;
@@ -624,9 +629,13 @@ class ProdSyncImg extends Command
 
         $errorMessage = $lastError ? $lastError->getMessage() : 'unknown error';
         $this->warn("Error actualizando Woo#{$wooId} sku={$sku}: {$errorMessage}");
+        $this->warn("IMG ERROR CONTEXT filename={$filename} sku={$sku} image_url={$imageUrl}");
         Log::warning($marker . ' woo update failed', [
             'woocommerce_id' => $wooId,
             'sku' => $sku,
+            'filename' => $filename,
+            'image_url' => $imageUrl,
+            'payload' => $payload,
             'error' => $errorMessage,
         ]);
 

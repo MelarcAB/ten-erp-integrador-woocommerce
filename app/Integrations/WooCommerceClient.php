@@ -447,10 +447,11 @@ class WooCommerceClient
             Log::warning('WC product PUT failed', [
                 'url' => $url,
                 'status' => $response->status(),
+                'body' => $response->body(),
                 'payload' => $payload,
             ]);
 
-            throw new RuntimeException("WC product PUT failed with HTTP {$response->status()}");
+            throw new RuntimeException("WC product PUT failed with HTTP {$response->status()}: " . trim($response->body()));
         }
 
         if (! $parseResponse) {
