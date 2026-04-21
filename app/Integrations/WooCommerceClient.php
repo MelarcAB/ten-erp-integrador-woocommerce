@@ -314,19 +314,7 @@ class WooCommerceClient
 
         $url = $this->baseUrl . '/products';
 
-        // Para este GET evitamos asJson(); en algunos entornos Plesk/WAF
-        // la combinación GET + Content-Type application/json acaba en 404.
-        $response = $this->rawHttp()
-            ->withBasicAuth($this->key, $this->secret)
-            ->get($url, $query);
-
-        if ($this->shouldRetryWithQueryAuth($response)) {
-            Log::warning('WC products GET retrying with query auth', [
-                'url' => $url,
-                'query' => $query,
-            ]);
-            $response = $this->rawHttp()->get($url, $this->withQueryAuth($query));
-        }
+        $response = $this->rawHttp()->get($url, $this->withQueryAuth($query));
 
         if (! $response->successful()) {
             Log::warning('WC products GET failed', [
@@ -334,7 +322,7 @@ class WooCommerceClient
                 'status' => $response->status(),
                 'body' => $response->body(),
                 'query' => $query,
-                'effective_url' => $url . '?' . http_build_query($query),
+                'effective_url' => $url . '?' . http_build_query($this->withQueryAuth($query)),
                 'query_auth_effective_url' => $url . '?' . http_build_query($this->withQueryAuth($query)),
             ]);
 
@@ -410,14 +398,7 @@ class WooCommerceClient
     {
         $url = $this->baseUrl . '/products/' . $id;
 
-        $response = $this->http()->get($url);
-
-        if ($this->shouldRetryWithQueryAuth($response)) {
-            Log::warning('WC product GET retrying with query auth', [
-                'url' => $url,
-            ]);
-            $response = $this->rawHttp()->get($url, $this->withQueryAuth());
-        }
+        $response = $this->rawHttp()->get($url, $this->withQueryAuth());
 
         if (! $response->successful()) {
             Log::warning('WC product GET failed', [
@@ -491,17 +472,9 @@ class WooCommerceClient
     {
         $url = $this->baseUrl . '/products/' . $id;
 
-        $response = $this->http()->put($url, $payload);
-
-        if ($this->shouldRetryWithQueryAuth($response)) {
-            Log::warning('WC product PUT retrying with query auth', [
-                'url' => $url,
-                'payload' => $payload,
-            ]);
-            $response = $this->rawHttp()
-                ->asJson()
-                ->put($url . '?' . http_build_query($this->withQueryAuth()), $payload);
-        }
+        $response = $this->rawHttp()
+            ->asJson()
+            ->put($url . '?' . http_build_query($this->withQueryAuth()), $payload);
 
         if (! $response->successful()) {
             Log::warning('WC product PUT failed', [
