@@ -49,6 +49,12 @@ return [
         'client_key' => env('WC_CLIENT_KEY'),
         'client_secret' => env('WC_CLIENT_SECRET'),
         'base_url' => env('WC_BASE_URL', 'https://tu-tienda.com/wp-json/wc/v3'),
+        'timeout' => env('WC_TIMEOUT', 60),
+        'connect_timeout' => env('WC_CONNECT_TIMEOUT', 10),
+        'retries' => env('WC_RETRIES', 3),
+        'retry_sleep_ms' => env('WC_RETRY_SLEEP_MS', 250),
+        'media_username' => env('WP_MEDIA_USERNAME'),
+        'media_password' => env('WP_MEDIA_PASSWORD'),
     ]
 
 ];

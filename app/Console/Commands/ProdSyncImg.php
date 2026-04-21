@@ -266,7 +266,7 @@ class ProdSyncImg extends Command
                     continue;
                 }
 
-                $synced = $this->updateWooProductImagesWithRetry(
+                $updateResult = $this->updateWooProductImagesWithRetry(
                     $woo,
                     $wooId,
                     ['images' => $payloadImages],
@@ -275,9 +275,27 @@ class ProdSyncImg extends Command
                     $sku
                 );
 
-                if (!$synced) {
-                    $errors++;
-                    continue;
+                if (!$updateResult['ok']) {
+                    $fallbackUsed = false;
+                    if ($this->isRemoteImageFetchError((string) ($updateResult['error'] ?? ''))) {
+                        $this->warn("Fallback binario para Woo#{$wooId} sku={$sku} filename={$filename}");
+                        $fallbackUsed = $this->uploadBinaryImageFallback(
+                            $conn,
+                            $woo,
+                            $wooId,
+                            $ftpPath,
+                            $filename,
+                            $payloadImages,
+                            $maxRetries,
+                            $marker,
+                            $sku
+                        );
+                    }
+
+                    if (!$fallbackUsed) {
+                        $errors++;
+                        continue;
+                    }
                 }
 
                 $deleted += $this->deleteSyncedFiles($conn, [[
@@ -588,14 +606,14 @@ class ProdSyncImg extends Command
         int $maxRetries,
         string $marker,
         string $sku
-    ): bool {
+    ): array {
         $attempts = max(1, $maxRetries + 1);
         $lastError = null;
 
         for ($i = 1; $i <= $attempts; $i++) {
             try {
                 $woo->updateProducto($wooId, $payload, false);
-                return true;
+                return ['ok' => true, 'error' => null];
             } catch (Throwable $e) {
                 $lastError = $e;
                 if ($i < $attempts) {
@@ -612,7 +630,7 @@ class ProdSyncImg extends Command
             'error' => $errorMessage,
         ]);
 
-        return false;
+        return ['ok' => false, 'error' => $errorMessage];
     }
 
     private function urlExists(string $url): bool
@@ -627,5 +645,135 @@ class ProdSyncImg extends Command
             ]);
             return false;
         }
+    }
+
+    private function isRemoteImageFetchError(string $errorMessage): bool
+    {
+        $errorMessage = mb_strtolower(trim($errorMessage));
+        if ($errorMessage === '') {
+            return false;
+        }
+
+        return str_contains($errorMessage, 'woocommerce_product_image_upload_error')
+            || str_contains($errorMessage, 'error recuperando la imagen remota');
+    }
+
+    /**
+     * @param resource $ftpConn
+     * @param array<int,array{id?:int,src?:string,position?:int}> $payloadImages
+     */
+    private function uploadBinaryImageFallback(
+        $ftpConn,
+        WooCommerceClient $woo,
+        int $wooId,
+        string $ftpPath,
+        string $filename,
+        array $payloadImages,
+        int $maxRetries,
+        string $marker,
+        string $sku
+    ): bool {
+        $binary = $this->downloadFtpBinary($ftpConn, $ftpPath);
+        if ($binary === null) {
+            $this->warn("No se pudo descargar desde FTP para fallback binario: {$filename}");
+            return false;
+        }
+
+        try {
+            $media = $woo->uploadMedia($filename, $binary, $this->guessMimeType($filename));
+        } catch (Throwable $e) {
+            $this->warn("Error subiendo media binaria a WordPress para Woo#{$wooId} sku={$sku}: {$e->getMessage()}");
+            Log::warning($marker . ' binary media upload failed', [
+                'woocommerce_id' => $wooId,
+                'sku' => $sku,
+                'filename' => $filename,
+                'error' => $e->getMessage(),
+            ]);
+            return false;
+        }
+
+        $mediaId = (int) ($media['id'] ?? 0);
+        if ($mediaId <= 0) {
+            $this->warn("La subida binaria no devolvió attachment válido para {$filename}");
+            return false;
+        }
+
+        $payloadWithMediaId = $this->replaceImageSourceWithMediaId($payloadImages, $filename, $mediaId);
+        $updateResult = $this->updateWooProductImagesWithRetry(
+            $woo,
+            $wooId,
+            ['images' => $payloadWithMediaId],
+            $maxRetries,
+            $marker,
+            $sku
+        );
+
+        return (bool) ($updateResult['ok'] ?? false);
+    }
+
+    /**
+     * @param resource $ftpConn
+     */
+    private function downloadFtpBinary($ftpConn, string $ftpPath): ?string
+    {
+        $stream = fopen('php://temp', 'w+b');
+        if ($stream === false) {
+            return null;
+        }
+
+        try {
+            if (!@ftp_fget($ftpConn, $stream, $ftpPath, FTP_BINARY)) {
+                return null;
+            }
+
+            rewind($stream);
+            $contents = stream_get_contents($stream);
+            return is_string($contents) ? $contents : null;
+        } finally {
+            fclose($stream);
+        }
+    }
+
+    private function guessMimeType(string $filename): string
+    {
+        return match (strtolower((string) pathinfo($filename, PATHINFO_EXTENSION))) {
+            'jpg', 'jpeg' => 'image/jpeg',
+            'png' => 'image/png',
+            'gif' => 'image/gif',
+            'webp' => 'image/webp',
+            default => 'application/octet-stream',
+        };
+    }
+
+    /**
+     * @param array<int,array{id?:int,src?:string,position?:int}> $payloadImages
+     * @return array<int,array<string,int|string>>
+     */
+    private function replaceImageSourceWithMediaId(array $payloadImages, string $filename, int $mediaId): array
+    {
+        $normalizedFilename = $this->normalizeImageIdentifier($filename);
+        $updated = [];
+
+        foreach ($payloadImages as $image) {
+            $src = trim((string) ($image['src'] ?? ''));
+            $position = (int) ($image['position'] ?? 0);
+            $id = (int) ($image['id'] ?? 0);
+
+            if ($src !== '' && $this->normalizeImageIdentifier($src) === $normalizedFilename) {
+                $updated[] = ['id' => $mediaId, 'position' => $position];
+                continue;
+            }
+
+            if ($id > 0) {
+                $updated[] = ['id' => $id, 'position' => $position];
+                continue;
+            }
+
+            if ($src !== '') {
+                $updated[] = ['src' => $src, 'position' => $position];
+            }
+        }
+
+        return $updated;
     }
 }

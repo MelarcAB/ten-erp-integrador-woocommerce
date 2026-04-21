@@ -12,12 +12,16 @@ class WooCommerceClient
     private string $baseUrl;
     private string $key;
     private string $secret;
+    private string $mediaUsername;
+    private string $mediaPassword;
 
     public function __construct(?string $baseUrl = null, ?string $key = null, ?string $secret = null)
     {
         $this->baseUrl = rtrim($baseUrl ?? config('services.woocommerce.base_url'), '/');
         $this->key     = (string)($key ?? config('services.woocommerce.client_key'));
         $this->secret  = (string)($secret ?? config('services.woocommerce.client_secret'));
+        $this->mediaUsername = (string) config('services.woocommerce.media_username', '');
+        $this->mediaPassword = (string) config('services.woocommerce.media_password', '');
 
         if ($this->baseUrl === '' || $this->key === '' || $this->secret === '') {
             throw new RuntimeException('WooCommerce config incompleta: WC_BASE_URL / WC_CLIENT_KEY / WC_CLIENT_SECRET');
@@ -38,6 +42,18 @@ class WooCommerceClient
             ->acceptJson()
             ->asJson()
             ->withBasicAuth($this->key, $this->secret);
+    }
+
+    protected function rawHttp(): PendingRequest
+    {
+        return Http::timeout((int) config('services.woocommerce.timeout', 60))
+            ->connectTimeout((int) config('services.woocommerce.connect_timeout', 10))
+            ->retry(
+                (int) config('services.woocommerce.retries', 3),
+                (int) config('services.woocommerce.retry_sleep_ms', 250),
+                fn($exception) => true
+            )
+            ->acceptJson();
     }
 
     /**
@@ -780,5 +796,65 @@ class WooCommerceClient
         ]);
 
         throw new RuntimeException('WC products batch POST returned an unexpected response shape');
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    public function uploadMedia(string $filename, string $contents, string $mimeType = 'application/octet-stream'): array
+    {
+        $filename = trim($filename);
+        if ($filename === '') {
+            throw new RuntimeException('WP media upload requiere filename');
+        }
+
+        $url = $this->resolveWordPressMediaUrl();
+        $request = $this->rawHttp();
+
+        if ($this->mediaUsername !== '' && $this->mediaPassword !== '') {
+            $request = $request->withBasicAuth($this->mediaUsername, $this->mediaPassword);
+        } else {
+            $request = $request->withBasicAuth($this->key, $this->secret);
+        }
+
+        $response = $request
+            ->attach('file', $contents, $filename, ['Content-Type' => $mimeType])
+            ->post($url);
+
+        if (! $response->successful()) {
+            Log::warning('WP media POST failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'filename' => $filename,
+                'mime_type' => $mimeType,
+                'using_media_credentials' => $this->mediaUsername !== '' && $this->mediaPassword !== '',
+            ]);
+
+            throw new RuntimeException("WP media POST failed with HTTP {$response->status()}: " . trim($response->body()));
+        }
+
+        $json = $response->json();
+        if (is_array($json) && !array_is_list($json)) {
+            return $json;
+        }
+
+        Log::warning('WP media POST unexpected response shape', [
+            'url' => $url,
+            'json' => $json,
+            'filename' => $filename,
+        ]);
+
+        throw new RuntimeException('WP media POST returned an unexpected response shape');
+    }
+
+    private function resolveWordPressMediaUrl(): string
+    {
+        $mediaBase = preg_replace('#/wp-json/wc/[^/]+/?$#', '/wp-json/wp/v2', $this->baseUrl);
+        if (!is_string($mediaBase) || $mediaBase === $this->baseUrl) {
+            throw new RuntimeException('No se pudo derivar la URL de WP Media desde WC_BASE_URL');
+        }
+
+        return rtrim($mediaBase, '/') . '/media';
     }
 }

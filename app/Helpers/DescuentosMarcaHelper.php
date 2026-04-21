@@ -10,7 +10,8 @@ class DescuentosMarcaHelper
 {
     public static function getDescuentos(): array
     {
-        $url = 'https://ferrate.pd-12.com/wp-json/takeoff/v1/brand-rates';
+        //$url = 'https://ferrate.pd-12.com/wp-json/takeoff/v1/brand-rates';
+        $url = 'https://ferrate.com/wp-json/takeoff/v1/brand-rates';
 
         $response = Http::timeout(60)
             ->connectTimeout(10)
