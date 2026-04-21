@@ -167,9 +167,9 @@ class ProdSyncStocks extends Command
         $wooErrors = 0;
         $tenPositive = 0;
         $tenZeroProviderPositive = 0;
-        $tenZeroBlocked = 0;
+        $tenZeroReservable = 0;
         $providerOnlyPositive = 0;
-        $providerOnlyZeroBlocked = 0;
+        $providerOnlyZeroReservable = 0;
         $untouchedWooOnly = 0;
         $matchedBySku = 0;
         $matchedByEan = 0;
@@ -242,9 +242,9 @@ class ProdSyncStocks extends Command
                                 $matchedByEan++;
                             }
                         }
-                        $tenZeroBlocked++;
-                        $decision = 'ten_zero_blocked';
-                        $payload = $this->buildWooStockPayload($wooId, 0, 'outofstock', 'no');
+                        $tenZeroReservable++;
+                        $decision = 'ten_zero_reservable';
+                        $payload = $this->buildWooStockPayload($wooId, 0, 'onbackorder', 'yes');
                     }
                 } elseif ($providerMatch['found']) {
                     if ($providerMatch['match'] === 'sku') {
@@ -259,9 +259,9 @@ class ProdSyncStocks extends Command
                         $decision = 'provider_only_positive';
                         $payload = $this->buildWooStockPayload($wooId, 0, 'onbackorder', 'yes');
                     } else {
-                        $providerOnlyZeroBlocked++;
-                        $decision = 'provider_only_zero_blocked';
-                        $payload = $this->buildWooStockPayload($wooId, 0, 'outofstock', 'no');
+                        $providerOnlyZeroReservable++;
+                        $decision = 'provider_only_zero_reservable';
+                        $payload = $this->buildWooStockPayload($wooId, 0, 'onbackorder', 'yes');
                     }
                 } else {
                     $untouchedWooOnly++;
@@ -301,9 +301,9 @@ class ProdSyncStocks extends Command
                 . " | queued={$queued}"
                 . " | ten>0={$tenPositive}"
                 . " | ten0+prov>0={$tenZeroProviderPositive}"
-                . " | ten0_block={$tenZeroBlocked}"
+                . " | ten0_reserva={$tenZeroReservable}"
                 . " | prov_only>0={$providerOnlyPositive}"
-                . " | prov_only_block={$providerOnlyZeroBlocked}"
+                . " | prov_only_reserva={$providerOnlyZeroReservable}"
                 . " | untouched={$untouchedWooOnly}"
             );
 
@@ -322,8 +322,8 @@ class ProdSyncStocks extends Command
         $this->info(
             "OK fin. woo_processed={$processedWoo} | queued={$queued} | updated={$updated} | woo_errors={$wooErrors}"
             . " | ten_positive={$tenPositive} | ten_zero_provider_positive={$tenZeroProviderPositive}"
-            . " | ten_zero_blocked={$tenZeroBlocked} | provider_only_positive={$providerOnlyPositive}"
-            . " | provider_only_zero_blocked={$providerOnlyZeroBlocked} | untouched_woo_only={$untouchedWooOnly}"
+            . " | ten_zero_reservable={$tenZeroReservable} | provider_only_positive={$providerOnlyPositive}"
+            . " | provider_only_zero_reservable={$providerOnlyZeroReservable} | untouched_woo_only={$untouchedWooOnly}"
             . ($dryRun ? ' | dry-run=1' : '')
         );
 
@@ -334,9 +334,9 @@ class ProdSyncStocks extends Command
             'woo_errors' => $wooErrors,
             'ten_positive' => $tenPositive,
             'ten_zero_provider_positive' => $tenZeroProviderPositive,
-            'ten_zero_blocked' => $tenZeroBlocked,
+            'ten_zero_reservable' => $tenZeroReservable,
             'provider_only_positive' => $providerOnlyPositive,
-            'provider_only_zero_blocked' => $providerOnlyZeroBlocked,
+            'provider_only_zero_reservable' => $providerOnlyZeroReservable,
             'untouched_woo_only' => $untouchedWooOnly,
             'matched_by_sku' => $matchedBySku,
             'matched_by_ean' => $matchedByEan,
