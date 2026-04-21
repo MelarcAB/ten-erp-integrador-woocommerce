@@ -3,6 +3,7 @@
 namespace App\Integrations;
 
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
@@ -59,6 +60,28 @@ class WooCommerceClient
     public function getBaseUrl(): string
     {
         return $this->baseUrl;
+    }
+
+    private function shouldRetryWithQueryAuth(Response $response): bool
+    {
+        if ($response->status() !== 404) {
+            return false;
+        }
+
+        $body = trim($response->body());
+        if ($body === '') {
+            return false;
+        }
+
+        return str_contains(mb_strtolower($body), 'la p') && str_contains(mb_strtolower($body), 'no se ha encontrado');
+    }
+
+    private function withQueryAuth(array $query = []): array
+    {
+        return array_merge($query, [
+            'consumer_key' => $this->key,
+            'consumer_secret' => $this->secret,
+        ]);
     }
 
     /**
@@ -297,6 +320,14 @@ class WooCommerceClient
             ->withBasicAuth($this->key, $this->secret)
             ->get($url, $query);
 
+        if ($this->shouldRetryWithQueryAuth($response)) {
+            Log::warning('WC products GET retrying with query auth', [
+                'url' => $url,
+                'query' => $query,
+            ]);
+            $response = $this->rawHttp()->get($url, $this->withQueryAuth($query));
+        }
+
         if (! $response->successful()) {
             Log::warning('WC products GET failed', [
                 'url' => $url,
@@ -304,6 +335,7 @@ class WooCommerceClient
                 'body' => $response->body(),
                 'query' => $query,
                 'effective_url' => $url . '?' . http_build_query($query),
+                'query_auth_effective_url' => $url . '?' . http_build_query($this->withQueryAuth($query)),
             ]);
 
             throw new RuntimeException("WC products GET failed with HTTP {$response->status()}: " . trim($response->body()));
@@ -380,14 +412,22 @@ class WooCommerceClient
 
         $response = $this->http()->get($url);
 
+        if ($this->shouldRetryWithQueryAuth($response)) {
+            Log::warning('WC product GET retrying with query auth', [
+                'url' => $url,
+            ]);
+            $response = $this->rawHttp()->get($url, $this->withQueryAuth());
+        }
+
         if (! $response->successful()) {
             Log::warning('WC product GET failed', [
                 'url' => $url,
                 'status' => $response->status(),
                 'body' => $response->body(),
+                'query_auth_effective_url' => $url . '?' . http_build_query($this->withQueryAuth()),
             ]);
 
-            throw new RuntimeException("WC product GET failed with HTTP {$response->status()}");
+            throw new RuntimeException("WC product GET failed with HTTP {$response->status()}: " . trim($response->body()));
         }
 
         $json = $response->json();
@@ -453,12 +493,23 @@ class WooCommerceClient
 
         $response = $this->http()->put($url, $payload);
 
+        if ($this->shouldRetryWithQueryAuth($response)) {
+            Log::warning('WC product PUT retrying with query auth', [
+                'url' => $url,
+                'payload' => $payload,
+            ]);
+            $response = $this->rawHttp()
+                ->asJson()
+                ->put($url . '?' . http_build_query($this->withQueryAuth()), $payload);
+        }
+
         if (! $response->successful()) {
             Log::warning('WC product PUT failed', [
                 'url' => $url,
                 'status' => $response->status(),
                 'body' => $response->body(),
                 'payload' => $payload,
+                'query_auth_effective_url' => $url . '?' . http_build_query($this->withQueryAuth()),
             ]);
 
             throw new RuntimeException("WC product PUT failed with HTTP {$response->status()}: " . trim($response->body()));
