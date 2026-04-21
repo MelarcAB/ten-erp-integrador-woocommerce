@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Integrations\WooCommerceClient;
+use App\Models\Producto;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -349,6 +350,20 @@ class ProdSyncImg extends Command
             return 0;
         }
 
+        $localWooId = (int) (Producto::query()
+            ->bySku($sku)
+            ->whereNotNull('woocommerce_id')
+            ->value('woocommerce_id') ?? 0);
+
+        if ($localWooId > 0) {
+            $skuToIdCache[$sku] = $localWooId;
+            Log::info('[PROD_SYNC_IMG v1] resolve sku local hit', [
+                'sku' => $sku,
+                'woocommerce_id' => $localWooId,
+            ]);
+            return $localWooId;
+        }
+
         try {
             $rows = $woo->getProductosBySku($sku, 1, 1);
             $first = $rows[0] ?? null;
@@ -364,6 +379,7 @@ class ProdSyncImg extends Command
         } catch (Throwable $e) {
             Log::warning('[PROD_SYNC_IMG v1] resolve sku failed', [
                 'sku' => $sku,
+                'local_woocommerce_id' => $localWooId,
                 'base_url' => $woo->getBaseUrl(),
                 'request_url' => rtrim($woo->getBaseUrl(), '/') . '/products?' . http_build_query([
                     'per_page' => 1,
