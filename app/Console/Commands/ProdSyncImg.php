@@ -349,8 +349,11 @@ class ProdSyncImg extends Command
             return 0;
         }
 
+        $query = ['_fields' => 'id,sku'];
+        $baseUrl = rtrim($woo->getBaseUrl(), '/') . '/products';
+
         try {
-            $rows = $woo->getProductosBySku($sku, 1, 1, ['_fields' => 'id,sku']);
+            $rows = $woo->getProductosBySku($sku, 1, 1, $query);
             $first = $rows[0] ?? null;
             $wooId = (int) ($first['id'] ?? 0);
             if ($wooId > 0) {
@@ -364,6 +367,13 @@ class ProdSyncImg extends Command
         } catch (Throwable $e) {
             Log::warning('[PROD_SYNC_IMG v1] resolve sku failed', [
                 'sku' => $sku,
+                'base_url' => $woo->getBaseUrl(),
+                'request_url' => $baseUrl . '?' . http_build_query([
+                    'per_page' => 1,
+                    'page' => 1,
+                    'sku' => $sku,
+                    ...$query,
+                ]),
                 'error' => $e->getMessage(),
             ]);
         }

@@ -56,6 +56,11 @@ class WooCommerceClient
             ->acceptJson();
     }
 
+    public function getBaseUrl(): string
+    {
+        return $this->baseUrl;
+    }
+
     /**
      * GET /customers
      *
@@ -294,9 +299,10 @@ class WooCommerceClient
                 'status' => $response->status(),
                 'body' => $response->body(),
                 'query' => $query,
+                'effective_url' => $url . '?' . http_build_query($query),
             ]);
 
-            throw new RuntimeException("WC products GET failed with HTTP {$response->status()}");
+            throw new RuntimeException("WC products GET failed with HTTP {$response->status()}: " . trim($response->body()));
         }
 
         $json = $response->json();
