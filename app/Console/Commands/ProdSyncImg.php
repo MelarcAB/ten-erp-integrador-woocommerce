@@ -546,12 +546,17 @@ class ProdSyncImg extends Command
         }
 
         try {
-            $product = $woo->getProductoById($wooId);
+            $products = $woo->getProductos(1, 1, ['include' => (string) $wooId]);
+            $product = $products[0] ?? null;
         } catch (Throwable $e) {
             Log::warning('[PROD_SYNC_IMG v1] no se pudo leer producto Woo para preservar principal', [
                 'woocommerce_id' => $wooId,
                 'error' => $e->getMessage(),
             ]);
+            return [];
+        }
+
+        if (!is_array($product)) {
             return [];
         }
 
@@ -639,7 +644,9 @@ class ProdSyncImg extends Command
 
         for ($i = 1; $i <= $attempts; $i++) {
             try {
-                $woo->updateProducto($wooId, $payload, false);
+                $woo->updateProductosBatch([
+                    array_merge(['id' => $wooId], $payload),
+                ], false);
                 return ['ok' => true, 'error' => null];
             } catch (Throwable $e) {
                 $lastError = $e;
