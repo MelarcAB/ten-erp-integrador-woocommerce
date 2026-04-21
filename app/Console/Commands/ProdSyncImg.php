@@ -644,9 +644,44 @@ class ProdSyncImg extends Command
 
         for ($i = 1; $i <= $attempts; $i++) {
             try {
-                $woo->updateProductosBatch([
+                $response = $woo->updateProductosBatch([
                     array_merge(['id' => $wooId], $payload),
-                ], false);
+                ], true);
+
+                $updated = $response['update'][0] ?? null;
+                if (!is_array($updated)) {
+                    throw new \RuntimeException('WC batch sin item de respuesta para el producto');
+                }
+
+                $itemError = $updated['error'] ?? null;
+                if (is_array($itemError)) {
+                    $code = trim((string) ($itemError['code'] ?? 'unknown_error'));
+                    $message = trim((string) ($itemError['message'] ?? ''));
+                    throw new \RuntimeException("WC batch item error {$code}: {$message}");
+                }
+
+                $remoteImages = $updated['images'] ?? null;
+                $expectedFilename = $this->normalizeImageIdentifier($imageUrl);
+                $remoteContainsImage = false;
+
+                if (is_array($remoteImages)) {
+                    foreach ($remoteImages as $remoteImage) {
+                        if (!is_array($remoteImage)) {
+                            continue;
+                        }
+
+                        $src = trim((string) ($remoteImage['src'] ?? ''));
+                        if ($src !== '' && $this->normalizeImageIdentifier($src) === $expectedFilename) {
+                            $remoteContainsImage = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!$remoteContainsImage) {
+                    throw new \RuntimeException('WC batch sin error, pero la imagen no aparece en la respuesta del producto');
+                }
+
                 return ['ok' => true, 'error' => null];
             } catch (Throwable $e) {
                 $lastError = $e;

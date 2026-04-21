@@ -361,7 +361,7 @@ class WooCommerceClient
 
         $url = $this->baseUrl . '/products';
 
-        $response = $this->http()->get($url, $query);
+        $response = $this->rawHttp()->get($url, $this->withQueryAuth($query));
 
         if (! $response->successful()) {
             Log::warning('WC products GET failed', [
@@ -369,9 +369,10 @@ class WooCommerceClient
                 'status' => $response->status(),
                 'body' => $response->body(),
                 'query' => $query,
+                'effective_url' => $url . '?' . http_build_query($this->withQueryAuth($query)),
             ]);
 
-            throw new RuntimeException("WC products GET failed with HTTP {$response->status()}");
+            throw new RuntimeException("WC products GET failed with HTTP {$response->status()}: " . trim($response->body()));
         }
 
         $json = $response->json();
@@ -804,16 +805,20 @@ class WooCommerceClient
 
         $payload = ['update' => array_values($updates)];
         $url = $this->baseUrl . '/products/batch';
-        $response = $this->http()->post($url, $payload);
+        $response = $this->rawHttp()
+            ->asJson()
+            ->post($url . '?' . http_build_query($this->withQueryAuth()), $payload);
 
         if (! $response->successful()) {
             Log::warning('WC products batch POST failed', [
                 'url' => $url,
                 'status' => $response->status(),
                 'payload_count' => count($updates),
+                'body' => $response->body(),
+                'effective_url' => $url . '?' . http_build_query($this->withQueryAuth()),
             ]);
 
-            throw new RuntimeException("WC products batch POST failed with HTTP {$response->status()}");
+            throw new RuntimeException("WC products batch POST failed with HTTP {$response->status()}: " . trim($response->body()));
         }
 
         if (! $parseResponse) {
