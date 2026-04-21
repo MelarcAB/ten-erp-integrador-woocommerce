@@ -291,7 +291,11 @@ class WooCommerceClient
 
         $url = $this->baseUrl . '/products';
 
-        $response = $this->http()->get($url, $query);
+        // Para este GET evitamos asJson(); en algunos entornos Plesk/WAF
+        // la combinación GET + Content-Type application/json acaba en 404.
+        $response = $this->rawHttp()
+            ->withBasicAuth($this->key, $this->secret)
+            ->get($url, $query);
 
         if (! $response->successful()) {
             Log::warning('WC products GET failed', [
