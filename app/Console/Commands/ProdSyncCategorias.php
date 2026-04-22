@@ -49,7 +49,10 @@ class ProdSyncCategorias extends Command
             ->where(function ($sub) {
                 $sub->whereNull('ten_bloqueado')->orWhere('ten_bloqueado', false)->orWhere('ten_bloqueado', 0);
             })
-            ->where('sync_status', 'pending')
+            ->where(function ($sub) {
+                $sub->whereNotNull('woocommerce_categoria_id')
+                    ->orWhere('sync_status', 'pending');
+            })
             ->get();
         $total = $cats->count();
         $this->info("Seleccionadas: {$total}");
@@ -117,6 +120,24 @@ class ProdSyncCategorias extends Command
                     if ($wooIdInDb > 0) {
                         $exists = $this->wooCategoryExists($client, $wooIdInDb, $wooExistsCache);
                         if ($exists) {
+                            $wooCategory = $client->getCategoriaProductoById($wooIdInDb);
+                            $wooName = trim((string)($wooCategory['name'] ?? ''));
+
+                            if (!$this->sameCategoryName($wooName, $name)) {
+                                $resp = $client->updateCategoriaProducto($wooIdInDb, ['name' => $name]);
+                                $wcId = (int)($resp['id'] ?? $wooIdInDb);
+                                $wcParent = (int)($resp['parent'] ?? ($wooCategory['parent'] ?? 0));
+                                $c->woocommerce_categoria_id = $wcId;
+                                $c->woocommerce_categoria_padre_id = $wcParent > 0 ? $wcParent : null;
+                                $c->markSynced();
+                                $wooIdByTenId[$tenId] = $wcId;
+                                $this->line("[TEN#{$tenId}] UPDATE NAME WooCat#{$wcId} '{$wooName}' -> '{$name}'");
+                                $updated++;
+                                $synced++;
+                                $progressThisPass++;
+                                continue;
+                            }
+
                             $c->markSynced();
                             $wooIdByTenId[$tenId] = $wooIdInDb;
                             $this->line("[TEN#{$tenId}] OK WooCat#{$wooIdInDb} exists (skip update)");
@@ -277,6 +298,17 @@ class ProdSyncCategorias extends Command
     {
         $p = (int)($wooParentId ?? 0);
         return $slug . '|' . $p;
+    }
+
+    private function sameCategoryName(string $wooName, string $tenName): bool
+    {
+        $normalize = static function (string $value): string {
+            $value = html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $value = preg_replace('/\s+/u', ' ', trim($value)) ?? trim($value);
+            return $value;
+        };
+
+        return $normalize($wooName) === $normalize($tenName);
     }
 
     private function findWooCategoryIdBySlugAndParent(
