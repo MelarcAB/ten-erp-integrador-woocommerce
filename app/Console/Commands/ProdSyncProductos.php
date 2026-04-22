@@ -23,7 +23,6 @@ class ProdSyncProductos extends Command
         {--full-category-validation : Valida categorías para todos los productos enlazados en Woo}
         {--full-brand-sync : Fuerza sincronización de marca para todos los productos enlazados}
         {--brand-batch-size=100 : Tamaño del batch para sync masivo de marcas (1-100)}
-        {--skip-fabricantes-sync : Omitir pre-sync de fabricantes TEN->BD->Woo}
         {--skip-stocks-sync : Omitir pre-sync de stocks TEN->BD->Woo}
         {--skip-stock-proveedores-sync : Omitir pre-sync de stock por proveedores (CSV)}
         {--stocks-chunk-size=1000 : Chunk size para pre-sync de stocks}
@@ -51,66 +50,26 @@ class ProdSyncProductos extends Command
         // Paso 0: refrescar productos desde TEN (nuevos/cambios => pending)
         if (!$skipTenImport) {
             $this->info('Refrescando productos desde TEN antes de sincronizar...');
+            Log::info($marker . ' phase start', ['phase' => 'import_productos']);
             $importExit = $this->call('app:prod-import-productos');
             if ($importExit !== self::SUCCESS) {
                 $this->error('Falló el import de productos desde TEN. Se aborta sync.');
                 Log::error($marker . ' pre-sync import failed', ['exit_code' => $importExit]);
                 return self::FAILURE;
             }
+            Log::info($marker . ' phase done', ['phase' => 'import_productos', 'exit_code' => $importExit]);
         } else {
             $this->line('Import de productos TEN omitido por flag.');
+            Log::info($marker . ' phase skipped', ['phase' => 'import_productos']);
         }
 
         $fullCategoryValidation = (bool) $this->option('full-category-validation');
         $fullBrandSync = (bool) $this->option('full-brand-sync');
         $brandBatchSize = max(1, min(100, (int) $this->option('brand-batch-size')));
-        $skipFabricantesSync = (bool) $this->option('skip-fabricantes-sync');
         $skipStocksSync = (bool) $this->option('skip-stocks-sync');
         $skipStockProveedoresSync = (bool) $this->option('skip-stock-proveedores-sync');
         $stocksChunkSize = max(100, (int) $this->option('stocks-chunk-size'));
         $stocksBatchSize = max(1, min(100, (int) $this->option('stocks-batch-size')));
-
-        // Paso 0.1: refrescar fabricantes TEN -> BD -> Woo
-        if (!$skipFabricantesSync) {
-            $this->info('Sincronizando fabricantes antes de productos...');
-            $fabricantesExit = $this->call('app:prod-sync-fabricantes');
-            if ($fabricantesExit !== self::SUCCESS) {
-                $this->error('Falló el sync de fabricantes. Se aborta sync de productos.');
-                Log::error($marker . ' pre-sync fabricantes failed', ['exit_code' => $fabricantesExit]);
-                return self::FAILURE;
-            }
-        } else {
-            $this->line('Pre-sync fabricantes omitido por flag.');
-        }
-
-        // Paso 0.2: refrescar stocks TEN -> BD -> Woo (versión chunk/batch)
-        if (!$skipStocksSync) {
-            $this->info('Sincronizando stocks antes de productos...');
-            $stocksExit = $this->call('app:prod-sync-stocks', [
-                '--chunk-size' => $stocksChunkSize,
-                '--batch-size' => $stocksBatchSize,
-            ]);
-            if ($stocksExit !== self::SUCCESS) {
-                $this->error('Falló el sync de stocks. Se aborta sync de productos.');
-                Log::error($marker . ' pre-sync stocks failed', ['exit_code' => $stocksExit]);
-                return self::FAILURE;
-            }
-        } else {
-            $this->line('Pre-sync stocks omitido por flag.');
-        }
-
-        // Paso 0.3: sync stock por proveedores (CSV -> Woo), tras el stock normal
-        if (!$skipStockProveedoresSync) {
-            $this->info('Sincronizando stock por proveedores después del stock normal...');
-            $stockProveedoresExit = $this->call('app:prod-sync-stock-proveedores');
-            if ($stockProveedoresExit !== self::SUCCESS) {
-                $this->error('Falló el sync de stock por proveedores. Se aborta sync de productos.');
-                Log::error($marker . ' pre-sync stock proveedores failed', ['exit_code' => $stockProveedoresExit]);
-                return self::FAILURE;
-            }
-        } else {
-            $this->line('Pre-sync stock proveedores omitido por flag.');
-        }
 
         $pendingQuery = Producto::query()
             ->where('sync_status', 'pending')
@@ -123,6 +82,8 @@ class ProdSyncProductos extends Command
         $client = app(WooCommerceClient::class);
 
         if ($total > 0) {
+            $this->info('Iniciando sincronización de productos con WooCommerce...');
+            Log::info($marker . ' phase start', ['phase' => 'sync_productos']);
             $synced = 0;
             $linked = 0;
             $created = 0;
@@ -247,10 +208,20 @@ class ProdSyncProductos extends Command
             });
             $this->info("OK fin. synced={$synced} | created={$created} | linked={$linked} | updated={$updated} | errors={$errors}");
             Log::info($marker . ' done', compact('synced','created','linked','updated','errors'));
+            Log::info($marker . ' phase done', [
+                'phase' => 'sync_productos',
+                'synced' => $synced,
+                'created' => $created,
+                'linked' => $linked,
+                'updated' => $updated,
+                'errors' => $errors,
+            ]);
 
             $syncedTenIds = array_values(array_unique(array_filter($syncedTenIds, static fn ($id) => $id > 0)));
         } else {
             $syncedTenIds = [];
+            $this->line('No hay productos pendientes de sincronizar con Woo.');
+            Log::info($marker . ' phase skipped', ['phase' => 'sync_productos', 'reason' => 'no_pending_products']);
         }
 
         $brandSweepErrors = 0;
@@ -262,79 +233,124 @@ class ProdSyncProductos extends Command
         if (!$fullCategoryValidation && empty($syncedTenIds)) {
             $this->info('Validación de categorías omitida: no hubo productos sincronizados en esta ejecución.');
             Log::info($marker . ' category validation skipped (no synced products)');
-            return $brandSweepErrors > 0 ? self::FAILURE : self::SUCCESS;
-        }
-
-        $this->info(
-            $fullCategoryValidation
-                ? 'Validando categorías de productos en Woo (modo completo)...'
-                : 'Validando categorías de productos en Woo (solo sincronizados en esta ejecución)...'
-        );
-        static $catWooByTenId = null;
-        if ($catWooByTenId === null) {
-            $catWooByTenId = Categoria::query()
-                ->whereNotNull('woocommerce_categoria_id')
-                ->whereNotNull('ten_id_numero')
-                ->pluck('woocommerce_categoria_id', 'ten_id_numero')
-                ->map(fn($v) => (int) $v)
-                ->all();
-        }
-        $productosTodosQuery = Producto::query()
-            ->whereNotNull('woocommerce_id')
-            ->where('woocommerce_id', '!=', '')
-            ->orderBy('id');
-        if (!$fullCategoryValidation) {
-            $productosTodosQuery->whereIn('ten_id', $syncedTenIds);
-        }
-        $totalValidacion = (clone $productosTodosQuery)->count();
-        if ($totalValidacion === 0) {
-            $this->info('Validación de categorías finalizada (0 productos a validar).');
-            Log::info($marker . ' category validation done', ['count' => 0, 'full' => $fullCategoryValidation]);
-            return self::SUCCESS;
-        }
-        $processedValidacion = 0;
-        $productosTodosQuery->chunkById(200, function ($productos) use (
-            $client,
-            $marker,
-            $catWooByTenId,
-            $totalValidacion,
-            &$processedValidacion
-        ) {
-            foreach ($productos as $p) {
-                $processedValidacion++;
-                $wooId = (int) $p->woocommerce_id;
-                if (!$wooId) continue;
-                $wooCatIds = $this->desiredWooCategoryIdsForProduct($p, $catWooByTenId);
-                if (empty($wooCatIds)) continue;
-                try {
-                    $remote = $client->getProductoById($wooId);
-                    $wooCats = is_array($remote) && isset($remote['categories']) ? $remote['categories'] : [];
-                    $currentWooCatIds = [];
-                    foreach ($wooCats as $c) {
-                        $catId = (int) ($c['id'] ?? 0);
-                        if ($catId > 0) {
-                            $currentWooCatIds[] = $catId;
+        } else {
+            $this->info(
+                $fullCategoryValidation
+                    ? 'Validando categorías de productos en Woo (modo completo)...'
+                    : 'Validando categorías de productos en Woo (solo sincronizados en esta ejecución)...'
+            );
+            Log::info($marker . ' phase start', [
+                'phase' => 'validacion_categorias',
+                'full' => $fullCategoryValidation,
+            ]);
+            static $catWooByTenId = null;
+            if ($catWooByTenId === null) {
+                $catWooByTenId = Categoria::query()
+                    ->whereNotNull('woocommerce_categoria_id')
+                    ->whereNotNull('ten_id_numero')
+                    ->pluck('woocommerce_categoria_id', 'ten_id_numero')
+                    ->map(fn($v) => (int) $v)
+                    ->all();
+            }
+            $productosTodosQuery = Producto::query()
+                ->whereNotNull('woocommerce_id')
+                ->where('woocommerce_id', '!=', '')
+                ->orderBy('id');
+            if (!$fullCategoryValidation) {
+                $productosTodosQuery->whereIn('ten_id', $syncedTenIds);
+            }
+            $totalValidacion = (clone $productosTodosQuery)->count();
+            if ($totalValidacion === 0) {
+                $this->info('Validación de categorías finalizada (0 productos a validar).');
+                Log::info($marker . ' category validation done', ['count' => 0, 'full' => $fullCategoryValidation]);
+            } else {
+                $processedValidacion = 0;
+                $productosTodosQuery->chunkById(200, function ($productos) use (
+                    $client,
+                    $marker,
+                    $catWooByTenId,
+                    $totalValidacion,
+                    &$processedValidacion
+                ) {
+                    foreach ($productos as $p) {
+                        $processedValidacion++;
+                        $wooId = (int) $p->woocommerce_id;
+                        if (!$wooId) continue;
+                        $wooCatIds = $this->desiredWooCategoryIdsForProduct($p, $catWooByTenId);
+                        if (empty($wooCatIds)) continue;
+                        try {
+                            $remote = $client->getProductoById($wooId);
+                            $wooCats = is_array($remote) && isset($remote['categories']) ? $remote['categories'] : [];
+                            $currentWooCatIds = [];
+                            foreach ($wooCats as $c) {
+                                $catId = (int) ($c['id'] ?? 0);
+                                if ($catId > 0) {
+                                    $currentWooCatIds[] = $catId;
+                                }
+                            }
+                            $currentWooCatIds = array_values(array_unique($currentWooCatIds));
+                            sort($currentWooCatIds);
+                            $expectedWooCatIds = $wooCatIds;
+                            sort($expectedWooCatIds);
+                            if ($currentWooCatIds !== $expectedWooCatIds) {
+                                $payload = ['categories' => array_map(static fn ($id) => ['id' => $id], $wooCatIds)];
+                                $client->updateProducto($wooId, $payload);
+                                $this->line("[{$p->ten_id}] CATEGORÍAS ACTUALIZADAS en Woo #{$wooId} -> " . json_encode($wooCatIds));
+                            }
+                        } catch (Throwable $e) {
+                            $this->warn("[{$p->ten_id}] ERROR al validar categoría Woo: " . $e->getMessage());
+                            Log::error($marker . ' categoria sync failed', ['ten_id' => $p->ten_id, 'woo_id' => $wooId, 'cat_ids' => $wooCatIds, 'error' => $e->getMessage()]);
+                        }
+                        if (($processedValidacion % 500) === 0 || $processedValidacion === $totalValidacion) {
+                            $this->line("Validación categorías: {$processedValidacion}/{$totalValidacion}");
                         }
                     }
-                    $currentWooCatIds = array_values(array_unique($currentWooCatIds));
-                    sort($currentWooCatIds);
-                    $expectedWooCatIds = $wooCatIds;
-                    sort($expectedWooCatIds);
-                    if ($currentWooCatIds !== $expectedWooCatIds) {
-                        $payload = ['categories' => array_map(static fn ($id) => ['id' => $id], $wooCatIds)];
-                        $client->updateProducto($wooId, $payload);
-                        $this->line("[{$p->ten_id}] CATEGORÍAS ACTUALIZADAS en Woo #{$wooId} -> " . json_encode($wooCatIds));
-                    }
-                } catch (Throwable $e) {
-                    $this->warn("[{$p->ten_id}] ERROR al validar categoría Woo: " . $e->getMessage());
-                    Log::error($marker . ' categoria sync failed', ['ten_id' => $p->ten_id, 'woo_id' => $wooId, 'cat_ids' => $wooCatIds, 'error' => $e->getMessage()]);
-                }
-                if (($processedValidacion % 500) === 0 || $processedValidacion === $totalValidacion) {
-                    $this->line("Validación categorías: {$processedValidacion}/{$totalValidacion}");
-                }
+                });
+                $this->info("Validación de categorías finalizada.");
+                Log::info($marker . ' phase done', [
+                    'phase' => 'validacion_categorias',
+                    'count' => $totalValidacion,
+                    'full' => $fullCategoryValidation,
+                ]);
             }
-        });
-        $this->info("Validación de categorías finalizada.");
+        }
+
+        if (!$skipStocksSync) {
+            $this->info('Sincronizando stocks después de productos...');
+            Log::info($marker . ' phase start', [
+                'phase' => 'sync_stocks',
+                'chunk_size' => $stocksChunkSize,
+                'batch_size' => $stocksBatchSize,
+            ]);
+            $stocksExit = $this->call('app:prod-sync-stocks', [
+                '--chunk-size' => $stocksChunkSize,
+                '--batch-size' => $stocksBatchSize,
+            ]);
+            if ($stocksExit !== self::SUCCESS) {
+                $this->error('Falló el sync de stocks tras productos.');
+                Log::error($marker . ' post-sync stocks failed', ['exit_code' => $stocksExit]);
+                return self::FAILURE;
+            }
+            Log::info($marker . ' phase done', ['phase' => 'sync_stocks', 'exit_code' => $stocksExit]);
+        } else {
+            $this->line('Sync de stocks final omitido por flag.');
+            Log::info($marker . ' phase skipped', ['phase' => 'sync_stocks']);
+        }
+
+        if (!$skipStockProveedoresSync) {
+            $this->info('Sincronizando stock por proveedores después del stock normal...');
+            Log::info($marker . ' phase start', ['phase' => 'sync_stock_proveedores']);
+            $stockProveedoresExit = $this->call('app:prod-sync-stock-proveedores');
+            if ($stockProveedoresExit !== self::SUCCESS) {
+                $this->error('Falló el sync de stock por proveedores tras productos.');
+                Log::error($marker . ' post-sync stock proveedores failed', ['exit_code' => $stockProveedoresExit]);
+                return self::FAILURE;
+            }
+            Log::info($marker . ' phase done', ['phase' => 'sync_stock_proveedores', 'exit_code' => $stockProveedoresExit]);
+        } else {
+            $this->line('Sync de stock proveedores final omitido por flag.');
+            Log::info($marker . ' phase skipped', ['phase' => 'sync_stock_proveedores']);
+        }
 
         return $brandSweepErrors > 0 ? self::FAILURE : self::SUCCESS;
     }
