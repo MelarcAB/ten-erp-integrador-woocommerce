@@ -82,6 +82,7 @@ class ProdSyncCategorias extends Command
         $pass = 0;
         $remaining = count($pending);
         $wooExistsCache = [];
+        $processedOverall = 0;
 
         while ($remaining > 0 && $pass < $maxPasses) {
             $pass++;
@@ -92,23 +93,36 @@ class ProdSyncCategorias extends Command
             foreach ($pending as $c) {
                 /** @var Categoria $c */
                 $tenId = (int)($c->ten_id_numero ?? 0);
+                $current = $processedOverall + 1;
+                $progressPrefix = "[{$current}/{$total}] [TEN#{$tenId}]";
                 $name = $this->categoriaNombre($c);
                 $slug = $this->slugify($name);
                 $tenParentId = (int)($c->ten_categoria_padre ?? 0);
+                $this->line("{$progressPrefix} CHECK name='{$name}' slug='{$slug}'");
+                Log::info($marker . ' item start', [
+                    'current' => $current,
+                    'total' => $total,
+                    'ten_id' => $tenId,
+                    'name' => $name,
+                    'slug' => $slug,
+                    'pass' => $pass,
+                ]);
                 if ($tenId <= 0 || $slug === '') {
                     $errors++;
                     $msg = 'Categoría sin ten_id_numero o sin nombre usable';
-                    $this->warn("[TEN#{$tenId}] ERROR: {$msg}");
+                    $this->warn("{$progressPrefix} ERROR: {$msg}");
                     Log::warning($marker . ' item error', ['ten_id' => $tenId, 'reason' => $msg]);
                     $c->markError($msg);
+                    $processedOverall++;
                     continue;
                 }
                 if ($tenParentId > 0 && $tenParentId === $tenId) {
                     $errors++;
                     $msg = 'Categoría con parent igual a sí misma (ciclo)';
-                    $this->warn("[TEN#{$tenId}] ERROR: {$msg}");
+                    $this->warn("{$progressPrefix} ERROR: {$msg}");
                     Log::warning($marker . ' item error', ['ten_id' => $tenId, 'slug' => $slug, 'reason' => $msg]);
                     $c->markError($msg);
+                    $processedOverall++;
                     continue;
                 }
                 $wooParentId = 0;
@@ -131,33 +145,36 @@ class ProdSyncCategorias extends Command
                                 $c->woocommerce_categoria_padre_id = $wcParent > 0 ? $wcParent : null;
                                 $c->markSynced();
                                 $wooIdByTenId[$tenId] = $wcId;
-                                $this->line("[TEN#{$tenId}] UPDATE NAME WooCat#{$wcId} '{$wooName}' -> '{$name}'");
+                                $this->line("{$progressPrefix} UPDATE NAME WooCat#{$wcId} '{$wooName}' -> '{$name}'");
                                 $updated++;
                                 $synced++;
                                 $progressThisPass++;
+                                $processedOverall++;
                                 continue;
                             }
 
                             $c->markSynced();
                             $wooIdByTenId[$tenId] = $wooIdInDb;
-                            $this->line("[TEN#{$tenId}] OK WooCat#{$wooIdInDb} exists (skip update)");
+                            $this->line("{$progressPrefix} OK WooCat#{$wooIdInDb} exists (skip update)");
                             $validated++;
                             $synced++;
                             $progressThisPass++;
+                            $processedOverall++;
                             continue;
                         }
-                        $this->line("[TEN#{$tenId}] WooCat#{$wooIdInDb} missing -> create/link");
+                        $this->line("{$progressPrefix} WooCat#{$wooIdInDb} missing -> create/link");
                         Log::info($marker . ' woo missing', ['ten_id' => $tenId, 'woo_id' => $wooIdInDb, 'pass' => $pass]);
                     }
 
                     if ($wooParentId > 0 && ! $this->wooCategoryExists($client, $wooParentId, $wooExistsCache)) {
-                        $this->line("[TEN#{$tenId}] SKIP (parent WooCat#{$wooParentId} missing)");
+                        $this->line("{$progressPrefix} SKIP (parent WooCat#{$wooParentId} missing)");
                         Log::info($marker . ' skip parent missing', [
                             'ten_id' => $tenId,
                             'woo_parent_id' => $wooParentId,
                             'pass' => $pass,
                         ]);
                         $skipped++;
+                        $processedOverall++;
                         continue;
                     }
 
@@ -191,10 +208,11 @@ class ProdSyncCategorias extends Command
                             $c->markSynced();
                             $wooIdByTenId[$tenId] = $wooId;
                             $wooIdBySlugParent[$this->slugParentKey($slug, $foundParent)] = $wooId;
-                            $this->line("[TEN#{$tenId}] LINK (por slug, parent ignorado) WooCat#{$wooId} slug={$slug} parent={$foundParent}");
+                            $this->line("{$progressPrefix} LINK (por slug, parent ignorado) WooCat#{$wooId} slug={$slug} parent={$foundParent}");
                             $linked++;
                             $synced++;
                             $progressThisPass++;
+                            $processedOverall++;
                             continue;
                         }
                     }
@@ -207,16 +225,17 @@ class ProdSyncCategorias extends Command
                         $c->markSynced();
                         $wooIdByTenId[$tenId] = $wcId;
                         $wooIdBySlugParent[$this->slugParentKey($slug, $wcParent)] = $wcId;
-                        $this->line("[TEN#{$tenId}] LINK WooCat#{$wcId} slug={$slug} parent={$wcParent}");
+                        $this->line("{$progressPrefix} LINK WooCat#{$wcId} slug={$slug} parent={$wcParent}");
                         $linked++;
                         $updated++;
                         $synced++;
                         $progressThisPass++;
+                        $processedOverall++;
                         continue;
                     }
                     // Crear
                     if ($noCreate) {
-                        $this->line("[TEN#{$tenId}] SKIP create (no_create) slug={$slug} parent={$wooParentId}");
+                        $this->line("{$progressPrefix} SKIP create (no_create) slug={$slug} parent={$wooParentId}");
                         Log::info($marker . ' skip create', [
                             'ten_id' => $tenId,
                             'slug' => $slug,
@@ -224,6 +243,7 @@ class ProdSyncCategorias extends Command
                             'pass' => $pass,
                         ]);
                         $skipped++;
+                        $processedOverall++;
                         continue;
                     }
                     $resp = $client->createCategoriaProducto($payload);
@@ -237,14 +257,15 @@ class ProdSyncCategorias extends Command
                     $c->markSynced();
                     $wooIdByTenId[$tenId] = $wcId;
                     $wooIdBySlugParent[$this->slugParentKey($slug, $wcParent)] = $wcId;
-                    $this->line("[TEN#{$tenId}] CREATE WooCat#{$wcId} slug={$slug} parent={$wcParent}");
+                    $this->line("{$progressPrefix} CREATE WooCat#{$wcId} slug={$slug} parent={$wcParent}");
                     $created++;
                     $synced++;
                     $progressThisPass++;
+                    $processedOverall++;
                 } catch (Throwable $e) {
                     $errors++;
                     $err = $e->getMessage();
-                    $this->warn("[TEN#{$tenId}] ERROR slug={$slug}: {$err}");
+                    $this->warn("{$progressPrefix} ERROR slug={$slug}: {$err}");
                     Log::error($marker . ' item error (exception)', [
                         'ten_id' => $tenId,
                         'name' => $name,
@@ -255,6 +276,7 @@ class ProdSyncCategorias extends Command
                         'pass' => $pass,
                     ]);
                     $c->markError($err);
+                    $processedOverall++;
                 }
             }
             $pending = $nextPending;
