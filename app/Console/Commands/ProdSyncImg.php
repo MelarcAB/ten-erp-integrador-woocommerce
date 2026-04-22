@@ -671,7 +671,7 @@ class ProdSyncImg extends Command
                         }
 
                         $src = trim((string) ($remoteImage['src'] ?? ''));
-                        if ($src !== '' && $this->normalizeImageIdentifier($src) === $expectedFilename) {
+                        if ($src !== '' && $this->imageMatchesExpected($src, $expectedFilename)) {
                             $remoteContainsImage = true;
                             break;
                         }
@@ -745,12 +745,40 @@ class ProdSyncImg extends Command
             }
 
             $src = trim((string) ($image['src'] ?? ''));
-            if ($src !== '' && $this->normalizeImageIdentifier($src) === $expectedFilename) {
+            if ($src !== '' && $this->imageMatchesExpected($src, $expectedFilename)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private function imageMatchesExpected(string $remoteSrc, string $expectedFilename): bool
+    {
+        $remoteNormalized = $this->normalizeImageIdentifier($remoteSrc);
+        if ($remoteNormalized === '' || $expectedFilename === '') {
+            return false;
+        }
+
+        if (strcasecmp($remoteNormalized, $expectedFilename) === 0) {
+            return true;
+        }
+
+        return $this->normalizeImageStem($remoteNormalized) === $this->normalizeImageStem($expectedFilename);
+    }
+
+    private function normalizeImageStem(string $value): string
+    {
+        $value = mb_strtolower(trim($value));
+        if ($value === '') {
+            return '';
+        }
+
+        $value = preg_replace('/\.[a-z0-9]+$/i', '', $value) ?? $value;
+        $value = preg_replace('/-(scaled|rotated)$/i', '', $value) ?? $value;
+        $value = preg_replace('/-\d+$/', '', $value) ?? $value;
+
+        return $value;
     }
 
     private function urlExists(string $url): bool
