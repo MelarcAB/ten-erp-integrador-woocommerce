@@ -144,7 +144,10 @@ class ProdSyncFabricantes extends Command
         ));
 
         $pendingQuery = Fabricante::query()
-            ->where('sync_status', 'pending')
+            ->where(function ($query) {
+                $query->whereNotNull('woocommerce_marca_id')
+                    ->orWhere('sync_status', 'pending');
+            })
             ->orderBy('id');
         $totalPending = (clone $pendingQuery)->count();
         $this->info("Pendientes de sync Woo: {$totalPending}");
@@ -156,7 +159,9 @@ class ProdSyncFabricantes extends Command
         $wooClient = app(WooCommerceClient::class);
 
         try {
-            $wooBrandsByNormalizedName = $this->loadWooBrandsByNormalizedName($wooClient);
+            $wooBrands = $this->loadWooBrands($wooClient);
+            $wooBrandsByNormalizedName = $wooBrands['by_name'];
+            $wooBrandsById = $wooBrands['by_id'];
         } catch (Throwable $e) {
             $this->error('Error consultando marcas en WooCommerce: ' . $e->getMessage());
             Log::error($marker . ' woo brands load failed', ['error' => $e->getMessage()]);
@@ -171,6 +176,7 @@ class ProdSyncFabricantes extends Command
         $pendingQuery->chunkById(200, function ($fabricantes) use (
             $wooClient,
             &$wooBrandsByNormalizedName,
+            &$wooBrandsById,
             $noCreate,
             &$linked,
             &$created,
@@ -184,6 +190,15 @@ class ProdSyncFabricantes extends Command
                 $progress = $this->syncProgress($processed, $totalPending);
                 $name = trim((string) $fabricante->ten_nombre);
                 $normalizedName = $this->normalizeName($name);
+                $wooIdInDb = (int) ($fabricante->woocommerce_marca_id ?? 0);
+                $this->line("[{$processed}/{$totalPending}] [TEN#{$fabricante->ten_id_numero}] CHECK nombre=\"{$name}\" woo_id={$wooIdInDb}{$progress}");
+                Log::info('[PROD_SYNC_FABRICANTES v1] item start', [
+                    'processed' => $processed,
+                    'total' => $totalPending,
+                    'ten_id' => (int) $fabricante->ten_id_numero,
+                    'ten_nombre' => $name,
+                    'woocommerce_marca_id' => $wooIdInDb,
+                ]);
                 if ($normalizedName === '') {
                     $fabricante->markError('Fabricante sin nombre válido');
                     $errors++;
@@ -192,12 +207,48 @@ class ProdSyncFabricantes extends Command
                 }
 
                 try {
+                    if ($wooIdInDb > 0 && isset($wooBrandsById[$wooIdInDb])) {
+                        $wooBrand = $wooBrandsById[$wooIdInDb];
+                        $wooName = trim((string) ($wooBrand['name'] ?? ''));
+                        if (!$this->sameBrandName($wooName, $name)) {
+                            $resp = $wooClient->updateMarcaProducto($wooIdInDb, ['name' => $name]);
+                            $updatedWooId = (int) ($resp['id'] ?? $wooIdInDb);
+                            $updatedWooName = trim((string) ($resp['name'] ?? $name));
+                            $fabricante->woocommerce_marca_id = $updatedWooId;
+                            $fabricante->woocommerce_marca_nombre = $updatedWooName;
+                            $fabricante->markSynced();
+                            unset($wooBrandsByNormalizedName[$this->normalizeName($wooName)]);
+                            $wooBrandsByNormalizedName[$normalizedName] = [
+                                'id' => $updatedWooId,
+                                'name' => $updatedWooName,
+                            ];
+                            $wooBrandsById[$updatedWooId] = [
+                                'id' => $updatedWooId,
+                                'name' => $updatedWooName,
+                            ];
+                            $linked++;
+                            $this->line("[TEN#{$fabricante->ten_id_numero}] UPDATE NAME WooBrand#{$updatedWooId} nombre=\"{$wooName}\" -> \"{$updatedWooName}\"{$progress}");
+                            continue;
+                        }
+
+                        $fabricante->woocommerce_marca_id = $wooIdInDb;
+                        $fabricante->woocommerce_marca_nombre = $wooName;
+                        $fabricante->markSynced();
+                        $linked++;
+                        $this->line("[TEN#{$fabricante->ten_id_numero}] OK WooBrand#{$wooIdInDb} nombre=\"{$wooName}\"{$progress}");
+                        continue;
+                    }
+
                     if (isset($wooBrandsByNormalizedName[$normalizedName])) {
                         $wooId = (int) ($wooBrandsByNormalizedName[$normalizedName]['id'] ?? 0);
                         $wooName = (string) ($wooBrandsByNormalizedName[$normalizedName]['name'] ?? $name);
                         $fabricante->woocommerce_marca_id = $wooId > 0 ? $wooId : null;
                         $fabricante->woocommerce_marca_nombre = $wooName;
                         $fabricante->markSynced();
+                        $wooBrandsById[$wooId] = [
+                            'id' => $wooId,
+                            'name' => $wooName,
+                        ];
                         $linked++;
                         $this->line("[TEN#{$fabricante->ten_id_numero}] LINK WooBrand#{$wooId} nombre=\"{$wooName}\"{$progress}");
                         continue;
@@ -224,6 +275,10 @@ class ProdSyncFabricantes extends Command
                         'id' => $wooId,
                         'name' => $wooName,
                     ];
+                    $wooBrandsById[$wooId] = [
+                        'id' => $wooId,
+                        'name' => $wooName,
+                    ];
                     $created++;
                     $this->line("[TEN#{$fabricante->ten_id_numero}] CREATE WooBrand#{$wooId} nombre=\"{$wooName}\"{$progress}");
                 } catch (Throwable $e) {
@@ -241,11 +296,12 @@ class ProdSyncFabricantes extends Command
     }
 
     /**
-     * @return array<string, array{id:int,name:string}>
+     * @return array{by_name:array<string, array{id:int,name:string}>,by_id:array<int, array{id:int,name:string}>}
      */
-    private function loadWooBrandsByNormalizedName(WooCommerceClient $client): array
+    private function loadWooBrands(WooCommerceClient $client): array
     {
-        $map = [];
+        $byName = [];
+        $byId = [];
         $page = 1;
         $perPage = 100;
 
@@ -268,18 +324,25 @@ class ProdSyncFabricantes extends Command
                 if ($key === '') {
                     continue;
                 }
-                if (!isset($map[$key])) {
-                    $map[$key] = [
+                if (!isset($byName[$key])) {
+                    $byName[$key] = [
                         'id' => $id,
                         'name' => $name,
                     ];
                 }
+                $byId[$id] = [
+                    'id' => $id,
+                    'name' => $name,
+                ];
             }
 
             $page++;
         }
 
-        return $map;
+        return [
+            'by_name' => $byName,
+            'by_id' => $byId,
+        ];
     }
 
     /**
@@ -298,6 +361,17 @@ class ProdSyncFabricantes extends Command
         return mb_strtolower($name);
     }
 
+    private function sameBrandName(string $wooName, string $tenName): bool
+    {
+        $normalize = static function (string $value): string {
+            $value = html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $value = preg_replace('/\s+/u', ' ', trim($value)) ?? trim($value);
+            return $value;
+        };
+
+        return $normalize($wooName) === $normalize($tenName);
+    }
+
     private function syncProgress(int $processed, int $total): string
     {
         if ($total <= 0) {
@@ -308,4 +382,3 @@ class ProdSyncFabricantes extends Command
         return sprintf(' | %d/%d (%.2f%%)', $processed, $total, $percent);
     }
 }
-

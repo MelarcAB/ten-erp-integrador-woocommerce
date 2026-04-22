@@ -794,6 +794,41 @@ class WooCommerceClient
     }
 
     /**
+     * PUT /products/brands/{id}
+     *
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    public function updateMarcaProducto(int $id, array $payload): array
+    {
+        $url = $this->baseUrl . '/products/brands/' . $id;
+        $response = $this->http()->put($url, $payload);
+
+        if (! $response->successful()) {
+            Log::warning('WC product brand PUT failed', [
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'payload' => $payload,
+            ]);
+
+            throw new RuntimeException("WC product brand PUT failed with HTTP {$response->status()}");
+        }
+
+        $json = $response->json();
+        if (is_array($json) && !array_is_list($json)) {
+            return $json;
+        }
+
+        Log::warning('WC product brand PUT unexpected response shape', [
+            'url' => $url,
+            'json' => $json,
+        ]);
+
+        throw new RuntimeException('WC product brand PUT returned an unexpected response shape');
+    }
+
+    /**
      * @param array<int,array<string,mixed>> $updates
      * @return array<string,mixed>
      */
