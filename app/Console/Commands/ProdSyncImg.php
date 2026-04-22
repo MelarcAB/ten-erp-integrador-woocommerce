@@ -678,6 +678,12 @@ class ProdSyncImg extends Command
                     }
                 }
 
+                // En algunos entornos Woo aplica la imagen, pero la respuesta del batch
+                // no devuelve el array images actualizado. Verificamos el estado real.
+                if (!$remoteContainsImage && $this->remoteProductHasImage($woo, $wooId, $expectedFilename)) {
+                    $remoteContainsImage = true;
+                }
+
                 if (!$remoteContainsImage) {
                     throw new \RuntimeException('WC batch sin error, pero la imagen no aparece en la respuesta del producto');
                 }
@@ -704,6 +710,47 @@ class ProdSyncImg extends Command
         ]);
 
         return ['ok' => false, 'error' => $errorMessage];
+    }
+
+    private function remoteProductHasImage(WooCommerceClient $woo, int $wooId, string $expectedFilename): bool
+    {
+        if ($wooId <= 0 || $expectedFilename === '') {
+            return false;
+        }
+
+        try {
+            $products = $woo->getProductos(1, 1, ['include' => (string) $wooId]);
+        } catch (Throwable $e) {
+            Log::warning('[PROD_SYNC_IMG v1] no se pudo verificar el producto tras batch', [
+                'woocommerce_id' => $wooId,
+                'expected_filename' => $expectedFilename,
+                'error' => $e->getMessage(),
+            ]);
+            return false;
+        }
+
+        $product = $products[0] ?? null;
+        if (!is_array($product)) {
+            return false;
+        }
+
+        $images = $product['images'] ?? null;
+        if (!is_array($images)) {
+            return false;
+        }
+
+        foreach ($images as $image) {
+            if (!is_array($image)) {
+                continue;
+            }
+
+            $src = trim((string) ($image['src'] ?? ''));
+            if ($src !== '' && $this->normalizeImageIdentifier($src) === $expectedFilename) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function urlExists(string $url): bool
