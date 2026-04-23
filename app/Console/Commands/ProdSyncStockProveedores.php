@@ -16,19 +16,22 @@ class ProdSyncStockProveedores extends Command
         {--batch-size=100 : Tamaño del batch para /products/batch (recomendado 50-200)}
     ';
 
-    protected $description = 'Descarga CSV de proveedores, actualiza stock/precio en Woo por SKU. (Optimizado con batch)';
+    protected $description = 'Comando legado. Delegado al flujo unificado app:prod-sync-stocks.';
 
     private $providerLogHandle = null;
 
     public function handle(): int
     {
-        $marker = '[STOCK_PROVEEDORES v2]';
+        $marker = '[STOCK_PROVEEDORES v3]';
         $this->line($marker . ' start');
 
-        $url = 'https://tests.takeoffcomunicacion.es/stock_proveedor.csv';
         $dryRun = (bool) $this->option('dry-run');
-        $limit = (int) $this->option('limit');
-        $batchSize = max(1, (int) $this->option('batch-size'));
+        $this->warn('Comando legado: usando app:prod-sync-stocks como fuente única de verdad para stock y reservas.');
+        Log::warning($marker . ' deprecated command delegated', ['dry_run' => $dryRun]);
+
+        return $this->call('app:prod-sync-stocks', array_filter([
+            '--dry-run' => $dryRun ? true : null,
+        ], static fn ($value) => $value !== null));
 
         $tmp = tempnam(sys_get_temp_dir(), 'stock_prov_');
         if ($tmp === false) {

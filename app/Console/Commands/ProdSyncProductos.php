@@ -338,15 +338,11 @@ class ProdSyncProductos extends Command
         }
 
         if (!$skipStockProveedoresSync) {
-            $this->info('Sincronizando stock por proveedores después del stock normal...');
-            Log::info($marker . ' phase start', ['phase' => 'sync_stock_proveedores']);
-            $stockProveedoresExit = $this->call('app:prod-sync-stock-proveedores');
-            if ($stockProveedoresExit !== self::SUCCESS) {
-                $this->error('Falló el sync de stock por proveedores tras productos.');
-                Log::error($marker . ' post-sync stock proveedores failed', ['exit_code' => $stockProveedoresExit]);
-                return self::FAILURE;
-            }
-            Log::info($marker . ' phase done', ['phase' => 'sync_stock_proveedores', 'exit_code' => $stockProveedoresExit]);
+            $this->line('Sync de stock proveedores separado omitido: ya está integrado en app:prod-sync-stocks.');
+            Log::info($marker . ' phase skipped', [
+                'phase' => 'sync_stock_proveedores',
+                'reason' => 'integrated_in_prod_sync_stocks',
+            ]);
         } else {
             $this->line('Sync de stock proveedores final omitido por flag.');
             Log::info($marker . ' phase skipped', ['phase' => 'sync_stock_proveedores']);

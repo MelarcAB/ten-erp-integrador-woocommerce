@@ -2,11 +2,11 @@
 
 namespace App\Console\Commands;
 
+use App\Helpers\ProveedorStockHelper;
 use App\Integrations\TenClient;
 use App\Integrations\WooCommerceClient;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -21,11 +21,11 @@ class ProdSyncStocks extends Command
         {--provider-url=https://tests.takeoffcomunicacion.es/stock_proveedor.csv : URL del CSV/API de proveedores}
     ';
 
-    protected $description = 'Sincroniza stock final en WooCommerce con prioridad TEN y fallback proveedor, dejando intactos los productos gestionados solo en Woo.';
+    protected $description = 'Sincroniza stock final en WooCommerce con prioridad TEN y fallback proveedor, dejando el precio fuera de este proceso.';
 
     public function handle(): int
     {
-        $marker = '[PROD_SYNC_STOCKS v4]';
+        $marker = '[PROD_SYNC_STOCKS v6]';
         $dryRun = (bool) $this->option('dry-run');
         $chunkSize = max(100, (int) $this->option('chunk-size'));
         $batchSize = max(1, min(100, (int) $this->option('batch-size')));
@@ -207,8 +207,8 @@ class ProdSyncStocks extends Command
 
                 $tenMatch = $this->resolveStockMatch($sku, $ean, $tenStockBySku, $tenStockByEan);
                 $providerMatch = $tenOnly
-                    ? ['found' => false, 'stock' => null, 'match' => null]
-                    : $this->resolveStockMatch($sku, $ean, $providerStock['by_sku'], $providerStock['by_ean']);
+                    ? ['found' => false, 'stock' => null, 'price' => null, 'price_string' => null, 'match' => null]
+                    : $this->resolveProviderMatch($sku, $ean, $providerStock['by_sku'], $providerStock['by_ean']);
 
                 $payload = null;
                 $decision = null;
@@ -409,120 +409,56 @@ class ProdSyncStocks extends Command
     }
 
     /**
-     * @return array{by_sku:array<string,int>,by_ean:array<string,int>,processed:int,invalid:int}
+     * @return array{found:bool,stock:int|null,price:float|null,price_string:string|null,match:string|null}
      */
+    private function resolveProviderMatch(string $sku, string $ean, array $bySku, array $byEan): array
+    {
+        $candidates = [];
+        if ($sku !== '') {
+            $candidates[] = $sku;
+        }
+        if ($ean !== '' && $ean !== $sku) {
+            $candidates[] = $ean;
+        }
+
+        foreach ($candidates as $candidate) {
+            if (array_key_exists($candidate, $bySku)) {
+                $value = $bySku[$candidate];
+                return [
+                    'found' => true,
+                    'stock' => (int) ($value['stock'] ?? 0),
+                    'price' => isset($value['price']) ? (float) $value['price'] : null,
+                    'price_string' => $value['price_string'] ?? null,
+                    'match' => 'sku',
+                ];
+            }
+        }
+
+        foreach ($candidates as $candidate) {
+            if (array_key_exists($candidate, $byEan)) {
+                $value = $byEan[$candidate];
+                return [
+                    'found' => true,
+                    'stock' => (int) ($value['stock'] ?? 0),
+                    'price' => isset($value['price']) ? (float) $value['price'] : null,
+                    'price_string' => $value['price_string'] ?? null,
+                    'match' => 'ean',
+                ];
+            }
+        }
+
+        return [
+            'found' => false,
+            'stock' => null,
+            'price' => null,
+            'price_string' => null,
+            'match' => null,
+        ];
+    }
+
     private function loadProviderStockMaps(string $url): array
     {
-        if ($url === '') {
-            throw new \RuntimeException('La URL del proveedor está vacía');
-        }
-
-        $tmp = tempnam(sys_get_temp_dir(), 'stock_prov_');
-        if ($tmp === false) {
-            throw new \RuntimeException('No se pudo crear archivo temporal para proveedor');
-        }
-
-        try {
-            $response = Http::timeout(60)->get($url);
-            if (!$response->successful()) {
-                throw new \RuntimeException('Error al descargar CSV proveedor. HTTP ' . $response->status());
-            }
-
-            if (file_put_contents($tmp, $response->body()) === false) {
-                throw new \RuntimeException('No se pudo escribir el CSV proveedor en disco');
-            }
-
-            $handle = fopen($tmp, 'r');
-            if ($handle === false) {
-                throw new \RuntimeException('No se pudo abrir el CSV proveedor');
-            }
-
-            try {
-                $header = fgetcsv($handle, 0, ';');
-                if (!is_array($header)) {
-                    throw new \RuntimeException('No se pudieron leer los headers del proveedor');
-                }
-
-                $map = $this->mapHeaders($header);
-                if (!isset($map['MODELO'], $map['STOCK'])) {
-                    throw new \RuntimeException('Faltan columnas obligatorias proveedor: MODELO, STOCK');
-                }
-
-                $hasEan = isset($map['EAN']);
-                $bySku = [];
-                $byEan = [];
-                $processed = 0;
-                $invalid = 0;
-
-                while (($row = fgetcsv($handle, 0, ';')) !== false) {
-                    $processed++;
-                    if (!is_array($row)) {
-                        $invalid++;
-                        continue;
-                    }
-
-                    $sku = $this->getCol($row, $map['MODELO']);
-                    $ean = $hasEan ? $this->getCol($row, $map['EAN']) : '';
-                    $stock = $this->toInt($this->getCol($row, $map['STOCK']));
-
-                    if ($sku === '' && $ean === '') {
-                        $invalid++;
-                        continue;
-                    }
-
-                    if ($sku !== '') {
-                        $bySku[$sku] = $stock;
-                    }
-                    if ($ean !== '') {
-                        $byEan[$ean] = $stock;
-                    }
-                }
-            } finally {
-                fclose($handle);
-            }
-
-            return [
-                'by_sku' => $bySku,
-                'by_ean' => $byEan,
-                'processed' => $processed,
-                'invalid' => $invalid,
-            ];
-        } finally {
-            @unlink($tmp);
-        }
-    }
-
-    /**
-     * @param array<int,string> $header
-     * @return array<string,int>
-     */
-    private function mapHeaders(array $header): array
-    {
-        $map = [];
-        foreach ($header as $i => $h) {
-            $key = strtoupper(trim((string) $h));
-            if ($key !== '') {
-                $map[$key] = (int) $i;
-            }
-        }
-        return $map;
-    }
-
-    private function getCol(array $row, int $idx): string
-    {
-        $val = $row[$idx] ?? '';
-        return trim((string) $val);
-    }
-
-    private function toInt(string $val): int
-    {
-        $val = trim($val);
-        if ($val === '') {
-            return 0;
-        }
-
-        $norm = $this->normalizeNumberString($val);
-        return max(0, (int) round((float) $norm));
+        return ProveedorStockHelper::load($url);
     }
 
     private function normalizeNumberString(string $value): string

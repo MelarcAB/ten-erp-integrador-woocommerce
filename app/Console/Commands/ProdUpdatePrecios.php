@@ -2,10 +2,8 @@
 
 namespace App\Console\Commands;
 
-use App\Helpers\DescuentosMarcaHelper;
 use App\Integrations\TenClient;
 use App\Integrations\WooCommerceClient;
-use App\Models\Fabricante;
 use App\Models\Producto;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
@@ -21,15 +19,17 @@ class ProdUpdatePrecios extends Command
         {--limit=0 : Límite de productos TEN a procesar (0 = sin límite)}
         {--chunk-size=1000 : Tamaño de chunk para lecturas locales}
         {--batch-size=100 : Tamaño de batch para Woo /products/batch}
+        {--enteros : Redondea el precio final al entero superior en vez de acabar en 5 o 9}
         {--dry-run : No actualiza WooCommerce}
     ';
 
-    protected $description = 'Actualiza precios WooCommerce desde TEN aplicando IVA y descuentos por marca según stock real y bloqueo remoto.';
+    protected $description = 'Actualiza precios WooCommerce desde TEN aplicando IVA y respetando bloqueo remoto.';
 
     public function handle(): int
     {
-        $marker = '[PROD_UPDATE_PRECIOS v2]';
+        $marker = '[PROD_UPDATE_PRECIOS v5]';
         $dryRun = (bool) $this->option('dry-run');
+        $enteros = (bool) $this->option('enteros');
         $items = max(1, (int) $this->option('items'));
         $page = max(0, (int) $this->option('page'));
         $limit = max(0, (int) $this->option('limit'));
@@ -39,6 +39,7 @@ class ProdUpdatePrecios extends Command
         $this->line($marker . ' start');
         Log::info($marker . ' start', [
             'dry_run' => $dryRun,
+            'enteros' => $enteros,
             'items' => $items,
             'page' => $page,
             'limit' => $limit,
@@ -55,37 +56,34 @@ class ProdUpdatePrecios extends Command
             return self::FAILURE;
         }
 
-        try {
-            $this->info('Cargando descuentos por marca...');
-            $descuentos = DescuentosMarcaHelper::getDescuentos();
-        } catch (Throwable $e) {
-            $this->error('Error obteniendo descuentos por marca: ' . $e->getMessage());
-            Log::error($marker . ' descuentos failed', ['error' => $e->getMessage()]);
-            return self::FAILURE;
-        }
-
-        $descuentoByWooBrandId = [];
-        foreach ($descuentos as $row) {
-            if (!is_array($row)) {
-                continue;
-            }
-
-            $wooBrandId = (int) ($row['id'] ?? 0);
-            if ($wooBrandId <= 0) {
-                continue;
-            }
-
-            $descuentoByWooBrandId[$wooBrandId] = [
-                'name' => trim((string) ($row['name'] ?? '')),
-                'percent' => $this->toFloat($row['percent'] ?? 0),
-            ];
-        }
-        $this->info('Descuentos cargados: ' . count($descuentoByWooBrandId));
-
         /** @var TenClient $tenClient */
         $tenClient = app(TenClient::class);
         /** @var WooCommerceClient $wooClient */
         $wooClient = app(WooCommerceClient::class);
+
+        try {
+            $this->info('Llamando a TEN /Stocks/Get ...');
+            $tenStocks = $tenClient->getStocks();
+        } catch (Throwable $e) {
+            $this->error('Error TEN Stocks/Get: ' . $e->getMessage());
+            Log::error($marker . ' ten stocks failed', ['error' => $e->getMessage()]);
+            return self::FAILURE;
+        }
+
+        $tenStockById = [];
+        foreach ($tenStocks as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $tenId = (int) ($row['IdProducto'] ?? $row['Id'] ?? 0);
+            if ($tenId <= 0) {
+                continue;
+            }
+
+            $tenStockById[$tenId] = max(0, (int) ($row['Stock'] ?? 0));
+        }
+        $this->info('Stocks TEN cargados: ' . count($tenStockById));
 
         try {
             $this->info('Llamando a TEN /Products/Get ...');
@@ -114,10 +112,8 @@ class ProdUpdatePrecios extends Command
         $remoteReadErrors = 0;
         $priceLocked = 0;
         $queued = 0;
-        $discountApplied = 0;
-        $withoutDiscount = 0;
-        $stockZero = 0;
-        $stockPositive = 0;
+        $tenStockZero = 0;
+        $tenStockPositive = 0;
         $wooUpdated = 0;
         $wooErrors = 0;
         $batchCount = 0;
@@ -131,7 +127,6 @@ class ProdUpdatePrecios extends Command
             $chunkNum = $chunkIndex + 1;
 
             $skus = [];
-            $fabricanteTenIds = [];
             foreach ($chunk as $row) {
                 if (!is_array($row)) {
                     continue;
@@ -139,10 +134,6 @@ class ProdUpdatePrecios extends Command
                 $sku = trim((string) ($row['Codigo'] ?? ''));
                 if ($sku !== '') {
                     $skus[] = $sku;
-                }
-                $fabricanteTenId = (int) ($row['Fabricante'] ?? 0);
-                if ($fabricanteTenId > 0) {
-                    $fabricanteTenIds[] = $fabricanteTenId;
                 }
             }
 
@@ -157,17 +148,6 @@ class ProdUpdatePrecios extends Command
                     if ($sku !== '' && !isset($productosBySku[$sku])) {
                         $productosBySku[$sku] = $producto;
                     }
-                }
-            }
-
-            $fabricantesByTenId = [];
-            foreach (array_chunk(array_values(array_unique($fabricanteTenIds)), 1000) as $fabricanteChunk) {
-                $fabricantes = Fabricante::query()
-                    ->whereIn('ten_id_numero', $fabricanteChunk)
-                    ->get(['ten_id_numero', 'ten_nombre', 'woocommerce_marca_id']);
-
-                foreach ($fabricantes as $fabricante) {
-                    $fabricantesByTenId[(int) $fabricante->ten_id_numero] = $fabricante;
                 }
             }
 
@@ -250,29 +230,17 @@ class ProdUpdatePrecios extends Command
                     continue;
                 }
 
-                $stockIsZero = (bool) ($remoteState['stock_is_zero'] ?? false);
-                if ($stockIsZero) {
-                    $stockZero++;
-                } else {
-                    $stockPositive++;
-                }
-
                 $precioConIva = $precioBase * (1 + ($porcImpost / 100));
-                $regularPrice = $this->toDecimalString($precioConIva);
+                $regularPrice = $this->formatFinalPrice($precioConIva, $enteros);
 
-                $fabricanteTenId = (int) ($row['Fabricante'] ?? 0);
-                $fabricante = $fabricantesByTenId[$fabricanteTenId] ?? null;
-                $wooBrandId = (int) ($fabricante?->woocommerce_marca_id ?? 0);
-                $descuentoMarca = $descuentoByWooBrandId[$wooBrandId] ?? null;
-                $discountPercent = $descuentoMarca['percent'] ?? 0.0;
+                $tenId = (int) ($row['Id'] ?? 0);
+                $tenStock = $tenStockById[$tenId] ?? 0;
 
                 $salePrice = '';
-                if ($discountPercent > 0 && $stockIsZero) {
-                    $precioDescuento = max(0.0, $precioConIva * (1 - ($discountPercent / 100)));
-                    $salePrice = $this->toDecimalString($precioDescuento);
-                    $discountApplied++;
+                if ($tenStock > 0) {
+                    $tenStockPositive++;
                 } else {
-                    $withoutDiscount++;
+                    $tenStockZero++;
                 }
 
                 $pendingBatch[] = [
@@ -287,10 +255,7 @@ class ProdUpdatePrecios extends Command
                     'iva_percent' => $this->toDecimalString($porcImpost),
                     'regular_price' => $regularPrice,
                     'sale_price' => $salePrice,
-                    'stock_is_zero' => $stockIsZero,
-                    'woo_brand_id' => $wooBrandId,
-                    'brand_name' => $descuentoMarca['name'] ?? ($fabricante?->ten_nombre ?? ''),
-                    'discount_percent' => $discountPercent,
+                    'ten_stock' => $tenStock,
                     'price_blocked' => $priceBlocked,
                 ];
                 $queued++;
@@ -299,9 +264,7 @@ class ProdUpdatePrecios extends Command
                     $this->line(
                         "DRY sku={$sku} woo_id={$wooId} base={$this->toDecimalString($precioBase)} iva={$this->toDecimalString($porcImpost)}"
                         . " regular={$regularPrice} sale=" . ($salePrice !== '' ? $salePrice : '-')
-                        . " stock_zero=" . ($stockIsZero ? '1' : '0')
-                        . " brand=" . ($descuentoMarca['name'] ?? ($fabricante?->ten_nombre ?? '-'))
-                        . " dto=" . ($discountPercent > 0 ? $this->toDecimalString($discountPercent) : '0')
+                        . " ten_stock={$tenStock}"
                     );
                 }
 
@@ -331,8 +294,7 @@ class ProdUpdatePrecios extends Command
 
         $this->info(
             "OK fin. processed={$processed} | queued={$queued} | updated={$wooUpdated}"
-            . " | descuentos={$discountApplied} | sin_descuento={$withoutDiscount}"
-            . " | stock_zero={$stockZero} | stock_positive={$stockPositive}"
+            . " | ten_stock_zero={$tenStockZero} | ten_stock_positive={$tenStockPositive}"
             . " | price_locked={$priceLocked} | remote_read_errors={$remoteReadErrors}"
             . " | local_missing={$notFoundLocal} | no_woo_id={$noWooId}"
             . " | invalid_rows={$invalidRows} | invalid_price={$invalidPrice}"
@@ -344,10 +306,8 @@ class ProdUpdatePrecios extends Command
             'processed' => $processed,
             'queued' => $queued,
             'updated' => $wooUpdated,
-            'discount_applied' => $discountApplied,
-            'without_discount' => $withoutDiscount,
-            'stock_zero' => $stockZero,
-            'stock_positive' => $stockPositive,
+            'ten_stock_zero' => $tenStockZero,
+            'ten_stock_positive' => $tenStockPositive,
             'price_locked' => $priceLocked,
             'remote_read_errors' => $remoteReadErrors,
             'not_found_local' => $notFoundLocal,
@@ -613,5 +573,52 @@ class ProdUpdatePrecios extends Command
         $formatted = number_format($value, 6, '.', '');
         $formatted = rtrim(rtrim($formatted, '0'), '.');
         return $formatted === '' ? '0' : $formatted;
+    }
+
+    private function toPsychologicalDecimalString(float $value): string
+    {
+        $roundedCents = (int) round($value * 100, 0, PHP_ROUND_HALF_UP);
+        $lastDigit = $roundedCents % 10;
+
+        if ($lastDigit !== 5 && $lastDigit !== 9) {
+            if ($lastDigit < 5) {
+                $roundedCents += (5 - $lastDigit);
+            } elseif ($lastDigit < 9) {
+                $roundedCents += (9 - $lastDigit);
+            } else {
+                $roundedCents += 5;
+            }
+        }
+
+        return number_format($roundedCents / 100, 2, '.', '');
+    }
+
+    private function toIntegerCeilString(float $value): string
+    {
+        $integer = (int) ceil($value);
+        $lastDigit = $integer % 10;
+
+        if ($lastDigit === 5 || $lastDigit === 9) {
+            return (string) $integer;
+        }
+
+        if ($lastDigit < 5) {
+            $integer += (5 - $lastDigit);
+        } elseif ($lastDigit < 9) {
+            $integer += (9 - $lastDigit);
+        } else {
+            $integer += 5;
+        }
+
+        return (string) $integer;
+    }
+
+    private function formatFinalPrice(float $value, bool $enteros): string
+    {
+        if ($enteros) {
+            return $this->toIntegerCeilString($value);
+        }
+
+        return $this->toPsychologicalDecimalString($value);
     }
 }
