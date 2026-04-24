@@ -25,7 +25,7 @@ class ProdSyncStocks extends Command
 
     public function handle(): int
     {
-        $marker = '[PROD_SYNC_STOCKS v6]';
+        $marker = '[PROD_SYNC_STOCKS v7]';
         $dryRun = (bool) $this->option('dry-run');
         $chunkSize = max(100, (int) $this->option('chunk-size'));
         $batchSize = max(1, min(100, (int) $this->option('batch-size')));
@@ -179,7 +179,7 @@ class ProdSyncStocks extends Command
         while (true) {
             try {
                 $wooProducts = $wooClient->getProductos($wooPerPage, $page, [
-                    '_fields' => 'id,sku,global_unique_id',
+                    '_fields' => 'id,sku,global_unique_id,meta_data',
                 ]);
             } catch (Throwable $e) {
                 $this->error('Error Woo al listar productos: ' . $e->getMessage());
@@ -224,7 +224,14 @@ class ProdSyncStocks extends Command
                     if ($tenStock > 0) {
                         $tenPositive++;
                         $decision = 'ten_positive';
-                        $payload = $this->buildWooStockPayload($wooId, $tenStock, 'instock', 'no');
+                        $payload = $this->buildWooStockPayload(
+                            $wooProduct,
+                            $tenStock,
+                            'instock',
+                            'no',
+                            'ten',
+                            'STOCK DE TEN'
+                        );
                     } elseif ($providerMatch['found'] && (int) ($providerMatch['stock'] ?? 0) > 0) {
                         if ($providerMatch['match'] === 'sku') {
                             $matchedBySku++;
@@ -233,7 +240,14 @@ class ProdSyncStocks extends Command
                         }
                         $tenZeroProviderPositive++;
                         $decision = 'ten_zero_provider_positive';
-                        $payload = $this->buildWooStockPayload($wooId, 0, 'onbackorder', 'yes');
+                        $payload = $this->buildWooStockPayload(
+                            $wooProduct,
+                            (int) ($providerMatch['stock'] ?? 0),
+                            'instock',
+                            'no',
+                            'provider_csv',
+                            'STOCK DE CSV PROVEEDORES'
+                        );
                     } else {
                         if ($providerMatch['found']) {
                             if ($providerMatch['match'] === 'sku') {
@@ -244,7 +258,14 @@ class ProdSyncStocks extends Command
                         }
                         $tenZeroReservable++;
                         $decision = 'ten_zero_reservable';
-                        $payload = $this->buildWooStockPayload($wooId, 0, 'onbackorder', 'yes');
+                        $payload = $this->buildWooStockPayload(
+                            $wooProduct,
+                            0,
+                            'onbackorder',
+                            'yes',
+                            'reservable_sin_stock',
+                            'SIN STOCK (RESERVABLE)'
+                        );
                     }
                 } elseif ($providerMatch['found']) {
                     if ($providerMatch['match'] === 'sku') {
@@ -257,11 +278,25 @@ class ProdSyncStocks extends Command
                     if ($providerStockValue > 0) {
                         $providerOnlyPositive++;
                         $decision = 'provider_only_positive';
-                        $payload = $this->buildWooStockPayload($wooId, 0, 'onbackorder', 'yes');
+                        $payload = $this->buildWooStockPayload(
+                            $wooProduct,
+                            $providerStockValue,
+                            'instock',
+                            'no',
+                            'provider_csv',
+                            'STOCK DE CSV PROVEEDORES'
+                        );
                     } else {
                         $providerOnlyZeroReservable++;
                         $decision = 'provider_only_zero_reservable';
-                        $payload = $this->buildWooStockPayload($wooId, 0, 'onbackorder', 'yes');
+                        $payload = $this->buildWooStockPayload(
+                            $wooProduct,
+                            0,
+                            'onbackorder',
+                            'yes',
+                            'reservable_sin_stock',
+                            'SIN STOCK (RESERVABLE)'
+                        );
                     }
                 } else {
                     $untouchedWooOnly++;
@@ -397,14 +432,26 @@ class ProdSyncStocks extends Command
     /**
      * @return array<string,mixed>
      */
-    private function buildWooStockPayload(int $wooId, int $stockQuantity, string $stockStatus, string $backorders): array
+    private function buildWooStockPayload(
+        array $wooProduct,
+        int $stockQuantity,
+        string $stockStatus,
+        string $backorders,
+        string $stockSource,
+        string $stockSourceLabel
+    ): array
     {
+        $wooId = (int) ($wooProduct['id'] ?? 0);
         return [
             'id' => $wooId,
             'manage_stock' => true,
             'stock_quantity' => max(0, $stockQuantity),
             'stock_status' => $stockStatus,
             'backorders' => $backorders,
+            'meta_data' => $this->buildInfoMetaData($wooProduct['meta_data'] ?? [], [
+                '_takeoff_stock_source' => $stockSource,
+                '_takeoff_stock_source_label' => $stockSourceLabel,
+            ]),
         ];
     }
 
@@ -459,6 +506,56 @@ class ProdSyncStocks extends Command
     private function loadProviderStockMaps(string $url): array
     {
         return ProveedorStockHelper::load($url);
+    }
+
+    /**
+     * @param mixed $metaData
+     * @param array<string,string> $values
+     * @return array<int,array<string,mixed>>
+     */
+    private function buildInfoMetaData(mixed $metaData, array $values): array
+    {
+        $entries = [];
+        foreach ($values as $key => $value) {
+            $entry = [
+                'key' => $key,
+                'value' => $value,
+            ];
+
+            $existingId = $this->findMetaIdByKey($metaData, $key);
+            if ($existingId !== null) {
+                $entry['id'] = $existingId;
+            }
+
+            $entries[] = $entry;
+        }
+
+        return $entries;
+    }
+
+    /**
+     * @param mixed $metaData
+     */
+    private function findMetaIdByKey(mixed $metaData, string $key): ?int
+    {
+        if (!is_array($metaData)) {
+            return null;
+        }
+
+        foreach ($metaData as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            if ((string) ($item['key'] ?? '') !== $key) {
+                continue;
+            }
+
+            $id = (int) ($item['id'] ?? 0);
+            return $id > 0 ? $id : null;
+        }
+
+        return null;
     }
 
     private function normalizeNumberString(string $value): string

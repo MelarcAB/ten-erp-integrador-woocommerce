@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Helpers\ProveedorStockHelper;
 use App\Integrations\TenClient;
 use App\Integrations\WooCommerceClient;
 use App\Models\Producto;
@@ -23,11 +24,11 @@ class ProdUpdatePrecios extends Command
         {--dry-run : No actualiza WooCommerce}
     ';
 
-    protected $description = 'Actualiza precios WooCommerce desde TEN aplicando IVA y respetando bloqueo remoto.';
+    protected $description = 'Actualiza precios WooCommerce desde TEN o CSV proveedores según el origen del stock, respetando bloqueo remoto.';
 
     public function handle(): int
     {
-        $marker = '[PROD_UPDATE_PRECIOS v5]';
+        $marker = '[PROD_UPDATE_PRECIOS v6]';
         $dryRun = (bool) $this->option('dry-run');
         $enteros = (bool) $this->option('enteros');
         $items = max(1, (int) $this->option('items'));
@@ -60,6 +61,22 @@ class ProdUpdatePrecios extends Command
         $tenClient = app(TenClient::class);
         /** @var WooCommerceClient $wooClient */
         $wooClient = app(WooCommerceClient::class);
+
+        try {
+            $this->info('Cargando CSV de proveedores para precios...');
+            $providerStock = ProveedorStockHelper::load('https://tests.takeoffcomunicacion.es/stock_proveedor.csv');
+        } catch (Throwable $e) {
+            $this->error('Error proveedor: ' . $e->getMessage());
+            Log::error($marker . ' provider failed', ['error' => $e->getMessage()]);
+            return self::FAILURE;
+        }
+
+        $this->info(
+            'Proveedor: filas=' . $providerStock['processed']
+            . ' | sku=' . count($providerStock['by_sku'])
+            . ' | ean=' . count($providerStock['by_ean'])
+            . ' | invalid=' . $providerStock['invalid']
+        );
 
         try {
             $this->info('Llamando a TEN /Stocks/Get ...');
@@ -114,6 +131,9 @@ class ProdUpdatePrecios extends Command
         $queued = 0;
         $tenStockZero = 0;
         $tenStockPositive = 0;
+        $priceSourceTen = 0;
+        $priceSourceProvider = 0;
+        $providerPriceMissing = 0;
         $wooUpdated = 0;
         $wooErrors = 0;
         $batchCount = 0;
@@ -141,7 +161,7 @@ class ProdUpdatePrecios extends Command
             foreach (array_chunk(array_values(array_unique($skus)), 1000) as $skuChunk) {
                 $productos = Producto::query()
                     ->whereIn('ten_codigo', $skuChunk)
-                    ->get(['id', 'ten_codigo', 'woocommerce_id']);
+                    ->get(['id', 'ten_codigo', 'woocommerce_id', 'woocommerce_sku', 'ten_ean', 'woocommerce_ean']);
 
                 foreach ($productos as $producto) {
                     $sku = trim((string) ($producto->ten_codigo ?? ''));
@@ -231,22 +251,66 @@ class ProdUpdatePrecios extends Command
                 }
 
                 $precioConIva = $precioBase * (1 + ($porcImpost / 100));
-                $regularPrice = $this->formatFinalPrice($precioConIva, $enteros);
-
                 $tenId = (int) ($row['Id'] ?? 0);
                 $tenStock = $tenStockById[$tenId] ?? 0;
+                $stockSource = (string) ($remoteState['stock_source'] ?? '');
+                $providerLookupSku = trim((string) ($remoteState['sku'] ?? ''));
+                $providerLookupEan = trim((string) ($remoteState['ean'] ?? ''));
+                $providerMatch = $this->resolveProviderMatchCandidates(
+                    [
+                        $providerLookupSku,
+                        $providerLookupEan,
+                        trim((string) ($productoLocal->woocommerce_sku ?? '')),
+                        trim((string) ($productoLocal->ten_codigo ?? '')),
+                        trim((string) ($productoLocal->woocommerce_ean ?? '')),
+                        trim((string) ($productoLocal->ten_ean ?? '')),
+                    ],
+                    $providerStock['by_sku'],
+                    $providerStock['by_ean']
+                );
 
                 $salePrice = '';
+                $priceSource = 'ten';
+                $priceSourceLabel = 'PRECIO DE TEN';
+                $regularPrice = $this->formatTenIntegerPrice($precioConIva);
+
                 if ($tenStock > 0) {
                     $tenStockPositive++;
                 } else {
                     $tenStockZero++;
                 }
 
+                if ($stockSource === 'provider_csv') {
+                    $providerPrice = isset($providerMatch['price']) ? (float) $providerMatch['price'] : null;
+                    if ($providerPrice !== null && $providerPrice > 0) {
+                        $regularPrice = $this->formatProviderIntegerPrice($providerPrice * 0.9);
+                        $priceSource = 'provider_csv';
+                        $priceSourceLabel = 'PRECIO DE CSV PROVEEDORES';
+                        $priceSourceProvider++;
+                    } else {
+                        $providerPriceMissing++;
+                        Log::warning($marker . ' provider price missing for provider-stocked product', [
+                            'sku' => $sku,
+                            'woo_id' => $wooId,
+                            'stock_source' => $stockSource,
+                            'provider_lookup_sku' => $providerLookupSku,
+                            'provider_lookup_ean' => $providerLookupEan,
+                        ]);
+                        $this->printProgress($processed, $total, $chunkNum, $totalChunks);
+                        continue;
+                    }
+                } else {
+                    $priceSourceTen++;
+                }
+
                 $pendingBatch[] = [
                     'id' => $wooId,
                     'regular_price' => $regularPrice,
                     'sale_price' => $salePrice,
+                    'meta_data' => $this->buildInfoMetaData($remoteState['meta_data'] ?? [], [
+                        '_takeoff_price_source' => $priceSource,
+                        '_takeoff_price_source_label' => $priceSourceLabel,
+                    ]),
                 ];
                 $pendingBatchDebug[] = [
                     'woo_id' => $wooId,
@@ -256,6 +320,9 @@ class ProdUpdatePrecios extends Command
                     'regular_price' => $regularPrice,
                     'sale_price' => $salePrice,
                     'ten_stock' => $tenStock,
+                    'stock_source' => $stockSource,
+                    'provider_price' => $providerMatch['price_string'] ?? null,
+                    'price_source' => $priceSource,
                     'price_blocked' => $priceBlocked,
                 ];
                 $queued++;
@@ -265,6 +332,11 @@ class ProdUpdatePrecios extends Command
                         "DRY sku={$sku} woo_id={$wooId} base={$this->toDecimalString($precioBase)} iva={$this->toDecimalString($porcImpost)}"
                         . " regular={$regularPrice} sale=" . ($salePrice !== '' ? $salePrice : '-')
                         . " ten_stock={$tenStock}"
+                        . " stock_source=" . ($stockSource !== '' ? $stockSource : '-')
+                        . " provider_lookup_sku=" . ($providerLookupSku !== '' ? $providerLookupSku : '-')
+                        . " provider_lookup_ean=" . ($providerLookupEan !== '' ? $providerLookupEan : '-')
+                        . " provider_price=" . (($providerMatch['price_string'] ?? null) !== null ? $providerMatch['price_string'] : '-')
+                        . " price_source={$priceSource}"
                     );
                 }
 
@@ -295,6 +367,8 @@ class ProdUpdatePrecios extends Command
         $this->info(
             "OK fin. processed={$processed} | queued={$queued} | updated={$wooUpdated}"
             . " | ten_stock_zero={$tenStockZero} | ten_stock_positive={$tenStockPositive}"
+            . " | price_source_ten={$priceSourceTen} | price_source_provider={$priceSourceProvider}"
+            . " | provider_price_missing={$providerPriceMissing}"
             . " | price_locked={$priceLocked} | remote_read_errors={$remoteReadErrors}"
             . " | local_missing={$notFoundLocal} | no_woo_id={$noWooId}"
             . " | invalid_rows={$invalidRows} | invalid_price={$invalidPrice}"
@@ -308,6 +382,9 @@ class ProdUpdatePrecios extends Command
             'updated' => $wooUpdated,
             'ten_stock_zero' => $tenStockZero,
             'ten_stock_positive' => $tenStockPositive,
+            'price_source_ten' => $priceSourceTen,
+            'price_source_provider' => $priceSourceProvider,
+            'provider_price_missing' => $providerPriceMissing,
             'price_locked' => $priceLocked,
             'remote_read_errors' => $remoteReadErrors,
             'not_found_local' => $notFoundLocal,
@@ -356,7 +433,7 @@ class ProdUpdatePrecios extends Command
 
     /**
      * @param array<int,int> $wooIds
-     * @return array<int,array{stock_is_zero:bool,price_blocked:bool}>
+     * @return array<int,array{stock_is_zero:bool,price_blocked:bool,stock_source:string|null,meta_data:array<int,array<string,mixed>>,sku:string,ean:string}>
      */
     private function loadRemoteProductStateMap(
         WooCommerceClient $wooClient,
@@ -373,7 +450,7 @@ class ProdUpdatePrecios extends Command
             try {
                 $rows = $wooClient->getProductos(count($wooIdChunk), 1, [
                     'include' => implode(',', $wooIdChunk),
-                    '_fields' => 'id,stock_quantity,stock_status,meta_data,precio_bloqueado_ten',
+                    '_fields' => 'id,sku,global_unique_id,stock_quantity,stock_status,meta_data,precio_bloqueado_ten',
                 ]);
 
                 foreach ($rows as $row) {
@@ -390,6 +467,10 @@ class ProdUpdatePrecios extends Command
                     $stateByWooId[$wooId] = [
                         'stock_is_zero' => $this->isRemoteStockZero($row),
                         'price_blocked' => $this->isRemotePriceBlocked($row),
+                        'stock_source' => $this->getRemoteStockSource($row),
+                        'meta_data' => is_array($row['meta_data'] ?? null) ? $row['meta_data'] : [],
+                        'sku' => trim((string) ($row['sku'] ?? '')),
+                        'ean' => trim((string) ($row['global_unique_id'] ?? '')),
                     ];
                 }
             } catch (Throwable $e) {
@@ -410,6 +491,10 @@ class ProdUpdatePrecios extends Command
                     $stateByWooId[$wooId] = [
                         'stock_is_zero' => $this->isRemoteStockZero($row),
                         'price_blocked' => $this->isRemotePriceBlocked($row),
+                        'stock_source' => $this->getRemoteStockSource($row),
+                        'meta_data' => is_array($row['meta_data'] ?? null) ? $row['meta_data'] : [],
+                        'sku' => trim((string) ($row['sku'] ?? '')),
+                        'ean' => trim((string) ($row['global_unique_id'] ?? '')),
                     ];
                 } catch (Throwable $e) {
                     $remoteReadErrors++;
@@ -475,6 +560,185 @@ class ProdUpdatePrecios extends Command
         }
 
         return false;
+    }
+
+    /**
+     * @param array<string,mixed> $remoteProduct
+     */
+    private function getRemoteStockSource(array $remoteProduct): ?string
+    {
+        $meta = $remoteProduct['meta_data'] ?? null;
+        if (!is_array($meta)) {
+            return null;
+        }
+
+        foreach ($meta as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            if ((string) ($item['key'] ?? '') !== '_takeoff_stock_source') {
+                continue;
+            }
+
+            $value = trim((string) ($item['value'] ?? ''));
+            return $value !== '' ? $value : null;
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string,array{stock:int,price:float|null,price_string:string|null}> $bySku
+     * @param array<string,array{stock:int,price:float|null,price_string:string|null}> $byEan
+     * @return array{found:bool,stock:int|null,price:float|null,price_string:string|null,match:string|null}
+     */
+    private function resolveProviderMatch(string $sku, string $ean, array $bySku, array $byEan): array
+    {
+        $candidates = [];
+        if ($sku !== '') {
+            $candidates[] = $sku;
+        }
+        if ($ean !== '' && $ean !== $sku) {
+            $candidates[] = $ean;
+        }
+
+        foreach ($candidates as $candidate) {
+            if (array_key_exists($candidate, $bySku)) {
+                $value = $bySku[$candidate];
+                return [
+                    'found' => true,
+                    'stock' => (int) ($value['stock'] ?? 0),
+                    'price' => isset($value['price']) ? (float) $value['price'] : null,
+                    'price_string' => $value['price_string'] ?? null,
+                    'match' => 'sku',
+                ];
+            }
+        }
+
+        foreach ($candidates as $candidate) {
+            if (array_key_exists($candidate, $byEan)) {
+                $value = $byEan[$candidate];
+                return [
+                    'found' => true,
+                    'stock' => (int) ($value['stock'] ?? 0),
+                    'price' => isset($value['price']) ? (float) $value['price'] : null,
+                    'price_string' => $value['price_string'] ?? null,
+                    'match' => 'ean',
+                ];
+            }
+        }
+
+        return [
+            'found' => false,
+            'stock' => null,
+            'price' => null,
+            'price_string' => null,
+            'match' => null,
+        ];
+    }
+
+    /**
+     * @param array<int,string> $candidates
+     * @param array<string,array{stock:int,price:float|null,price_string:string|null}> $bySku
+     * @param array<string,array{stock:int,price:float|null,price_string:string|null}> $byEan
+     * @return array{found:bool,stock:int|null,price:float|null,price_string:string|null,match:string|null}
+     */
+    private function resolveProviderMatchCandidates(array $candidates, array $bySku, array $byEan): array
+    {
+        $normalized = [];
+        foreach ($candidates as $candidate) {
+            $candidate = trim($candidate);
+            if ($candidate === '' || in_array($candidate, $normalized, true)) {
+                continue;
+            }
+
+            $normalized[] = $candidate;
+        }
+
+        foreach ($normalized as $candidate) {
+            if (array_key_exists($candidate, $bySku)) {
+                $value = $bySku[$candidate];
+                return [
+                    'found' => true,
+                    'stock' => (int) ($value['stock'] ?? 0),
+                    'price' => isset($value['price']) ? (float) $value['price'] : null,
+                    'price_string' => $value['price_string'] ?? null,
+                    'match' => 'sku',
+                ];
+            }
+        }
+
+        foreach ($normalized as $candidate) {
+            if (array_key_exists($candidate, $byEan)) {
+                $value = $byEan[$candidate];
+                return [
+                    'found' => true,
+                    'stock' => (int) ($value['stock'] ?? 0),
+                    'price' => isset($value['price']) ? (float) $value['price'] : null,
+                    'price_string' => $value['price_string'] ?? null,
+                    'match' => 'ean',
+                ];
+            }
+        }
+
+        return [
+            'found' => false,
+            'stock' => null,
+            'price' => null,
+            'price_string' => null,
+            'match' => null,
+        ];
+    }
+
+    /**
+     * @param mixed $metaData
+     * @param array<string,string> $values
+     * @return array<int,array<string,mixed>>
+     */
+    private function buildInfoMetaData(mixed $metaData, array $values): array
+    {
+        $entries = [];
+        foreach ($values as $key => $value) {
+            $entry = [
+                'key' => $key,
+                'value' => $value,
+            ];
+
+            $existingId = $this->findMetaIdByKey($metaData, $key);
+            if ($existingId !== null) {
+                $entry['id'] = $existingId;
+            }
+
+            $entries[] = $entry;
+        }
+
+        return $entries;
+    }
+
+    /**
+     * @param mixed $metaData
+     */
+    private function findMetaIdByKey(mixed $metaData, string $key): ?int
+    {
+        if (!is_array($metaData)) {
+            return null;
+        }
+
+        foreach ($metaData as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            if ((string) ($item['key'] ?? '') !== $key) {
+                continue;
+            }
+
+            $id = (int) ($item['id'] ?? 0);
+            return $id > 0 ? $id : null;
+        }
+
+        return null;
     }
 
     /**
@@ -575,50 +839,26 @@ class ProdUpdatePrecios extends Command
         return $formatted === '' ? '0' : $formatted;
     }
 
-    private function toPsychologicalDecimalString(float $value): string
-    {
-        $roundedCents = (int) round($value * 100, 0, PHP_ROUND_HALF_UP);
-        $lastDigit = $roundedCents % 10;
-
-        if ($lastDigit !== 5 && $lastDigit !== 9) {
-            if ($lastDigit < 5) {
-                $roundedCents += (5 - $lastDigit);
-            } elseif ($lastDigit < 9) {
-                $roundedCents += (9 - $lastDigit);
-            } else {
-                $roundedCents += 5;
-            }
-        }
-
-        return number_format($roundedCents / 100, 2, '.', '');
-    }
-
-    private function toIntegerCeilString(float $value): string
+    private function formatTenIntegerPrice(float $value): string
     {
         $integer = (int) ceil($value);
         $lastDigit = $integer % 10;
 
-        if ($lastDigit === 5 || $lastDigit === 9) {
-            return (string) $integer;
+        if ($lastDigit !== 5 && $lastDigit !== 9) {
+            if ($lastDigit < 5) {
+                $integer += (5 - $lastDigit);
+            } elseif ($lastDigit < 9) {
+                $integer += (9 - $lastDigit);
+            } else {
+                $integer += 5;
+            }
         }
 
-        if ($lastDigit < 5) {
-            $integer += (5 - $lastDigit);
-        } elseif ($lastDigit < 9) {
-            $integer += (9 - $lastDigit);
-        } else {
-            $integer += 5;
-        }
-
-        return (string) $integer;
+        return number_format((float) $integer, 2, '.', '');
     }
 
-    private function formatFinalPrice(float $value, bool $enteros): string
+    private function formatProviderIntegerPrice(float $value): string
     {
-        if ($enteros) {
-            return $this->toIntegerCeilString($value);
-        }
-
-        return $this->toPsychologicalDecimalString($value);
+        return number_format((float) round($value, 0, PHP_ROUND_HALF_UP), 2, '.', '');
     }
 }
