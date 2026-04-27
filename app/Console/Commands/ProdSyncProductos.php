@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
+use App\Console\Commands\Concerns\WritesDailyEntityLog;
 use App\Integrations\WooCommerceClient;
 use App\Models\Categoria;
 use App\Models\Fabricante;
@@ -13,6 +14,7 @@ use Throwable;
 
 class ProdSyncProductos extends Command
 {
+    use WritesDailyEntityLog;
     /**
      * The name and signature of the console command.
      *
@@ -42,6 +44,8 @@ class ProdSyncProductos extends Command
     public function handle(): int
     {
         $marker = '[PROD_SYNC_PRODUCTOS v1]';
+        $this->initDailyEntityLog('productos');
+        $this->writeDailyEntityLog($marker . ' start');
         $this->line($marker . ' start');
         Log::info($marker . ' start');
 
@@ -54,6 +58,7 @@ class ProdSyncProductos extends Command
             $importExit = $this->call('app:prod-import-productos');
             if ($importExit !== self::SUCCESS) {
                 $this->error('Falló el import de productos desde TEN. Se aborta sync.');
+                $this->writeDailyEntityLog($marker . ' pre-sync import failed exit_code=' . $importExit);
                 Log::error($marker . ' pre-sync import failed', ['exit_code' => $importExit]);
                 return self::FAILURE;
             }
@@ -76,6 +81,7 @@ class ProdSyncProductos extends Command
             ->orderBy('id');
         $total = (clone $pendingQuery)->count();
         $this->info("Seleccionados: {$total}");
+        $this->writeDailyEntityLog("SELECTED count={$total}");
         Log::info($marker . ' selected', ['count' => $total]);
 
         /** @var WooCommerceClient $client */
@@ -114,6 +120,7 @@ class ProdSyncProductos extends Command
                         $errors++;
                         $msg = 'Producto sin ten_codigo (SKU)';
                         $this->warn("[{$p->ten_id}] ERROR: {$msg}{$progress}");
+                        $this->writeDailyEntityLog("PRODUCT_ERROR ten_id={$p->ten_id} sku= message={$msg}");
                         Log::warning($marker . ' product missing sku', ['ten_id' => $p->ten_id]);
                         $p->sync_status = 'error';
                         $p->last_error = $msg;
@@ -147,8 +154,9 @@ class ProdSyncProductos extends Command
                             $updated++;
                             $synced++;
                             $syncedTenIds[] = (int) $p->ten_id;
-                            $this->line("[{$p->ten_id}] UPDATE Woo #{$wcId} sku={$wcSku}{$progress}");
-                            continue;
+                        $this->line("[{$p->ten_id}] UPDATE Woo #{$wcId} sku={$wcSku}{$progress}");
+                        $this->writeDailyEntityLog("PRODUCT_UPDATE ten_id={$p->ten_id} woo_id={$wcId} sku={$wcSku}");
+                        continue;
                         }
                         // Buscar por SKU en Woo
                         $found = $client->getProductosBySku($sku, 100, 1);
@@ -177,6 +185,7 @@ class ProdSyncProductos extends Command
                             $synced++;
                             $syncedTenIds[] = (int) $p->ten_id;
                             $this->line("[{$p->ten_id}] LINK Woo #{$wcId} sku={$wcSku}{$progress}");
+                            $this->writeDailyEntityLog("PRODUCT_LINK ten_id={$p->ten_id} woo_id={$wcId} sku={$wcSku}");
                             continue;
                         }
                         // No existe -> crear
@@ -195,10 +204,12 @@ class ProdSyncProductos extends Command
                         $synced++;
                         $syncedTenIds[] = (int) $p->ten_id;
                         $this->line("[{$p->ten_id}] CREATE Woo #{$wcId} sku={$wcSku}{$progress}");
+                        $this->writeDailyEntityLog("PRODUCT_CREATE ten_id={$p->ten_id} woo_id={$wcId} sku={$wcSku}");
                     } catch (Throwable $e) {
                         $errors++;
                         $err = $e->getMessage();
                         $this->warn("[{$p->ten_id}] ERROR sku={$sku}: {$err}{$progress}");
+                        $this->writeDailyEntityLog("PRODUCT_EXCEPTION ten_id={$p->ten_id} sku={$sku} message={$err}");
                         Log::error($marker . ' product sync failed', ['ten_id' => $p->ten_id, 'sku' => $sku, 'error' => $err]);
                         $p->sync_status = 'error';
                         $p->last_error = $err;
@@ -207,6 +218,7 @@ class ProdSyncProductos extends Command
                 }
             });
             $this->info("OK fin. synced={$synced} | created={$created} | linked={$linked} | updated={$updated} | errors={$errors}");
+            $this->writeDailyEntityLog("SYNC_SUMMARY synced={$synced} created={$created} linked={$linked} updated={$updated} errors={$errors}");
             Log::info($marker . ' done', compact('synced','created','linked','updated','errors'));
             Log::info($marker . ' phase done', [
                 'phase' => 'sync_productos',
@@ -348,7 +360,13 @@ class ProdSyncProductos extends Command
             Log::info($marker . ' phase skipped', ['phase' => 'sync_stock_proveedores']);
         }
 
+        $this->writeDailyEntityLog('END brand_sweep_errors=' . $brandSweepErrors);
         return $brandSweepErrors > 0 ? self::FAILURE : self::SUCCESS;
+    }
+
+    public function __destruct()
+    {
+        $this->closeDailyEntityLog();
     }
 
     /**

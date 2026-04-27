@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
+use App\Console\Commands\Concerns\WritesDailyEntityLog;
 use App\Integrations\TenClient;
 use App\Integrations\Mappers\TenCategoryMapper;
 use App\Models\Categoria;
@@ -12,6 +13,7 @@ use Throwable;
 
 class ProdImportCategories extends Command
 {
+    use WritesDailyEntityLog;
     /**
      * The name and signature of the console command.
      *
@@ -32,6 +34,8 @@ class ProdImportCategories extends Command
     public function handle(): int
     {
         $marker = '[TEN_CAT_PROD_IMPORT v1]';
+        $this->initDailyEntityLog('categorias');
+        $this->writeDailyEntityLog($marker . ' INICIO');
         $this->line($marker . ' INICIO');
         Log::info($marker . ' INICIO');
 
@@ -41,11 +45,13 @@ class ProdImportCategories extends Command
             $tenCats = $client->getCategorias(100000); // Límite alto por seguridad
         } catch (Throwable $e) {
             $this->error('Error al llamar a TEN: ' . $e->getMessage());
+            $this->writeDailyEntityLog($marker . ' TEN ERROR: ' . $e->getMessage());
             Log::error($marker . ' Error TEN', ['error' => $e->getMessage()]);
             return self::FAILURE;
         }
 
         $totalFetched = count($tenCats);
+        $this->writeDailyEntityLog("FETCH count={$totalFetched}");
         $this->info("Recibidas: {$totalFetched} categorías");
         Log::info($marker . ' recibidas', ['count' => $totalFetched]);
         if ($totalFetched === 0) return self::SUCCESS;
@@ -81,6 +87,7 @@ class ProdImportCategories extends Command
         }
 
         $this->line("Mapeadas: " . count($rows) . " | sin ten_id_numero: {$skippedNoTenId} | omitidas por 'no usar': {$skippedNoUsar}");
+        $this->writeDailyEntityLog("MAP valid_rows=" . count($rows) . " skipped_no_ten_id_numero={$skippedNoTenId} skipped_no_usar={$skippedNoUsar}");
         Log::info($marker . ' mapeadas', [
             'valid_rows' => count($rows),
             'skipped_no_ten_id_numero' => $skippedNoTenId,
@@ -138,6 +145,7 @@ class ProdImportCategories extends Command
         }
 
         $this->info("Insertados: {$insertCount} | Actualizados: {$updateCount} | Omitidos: {$skipCount} | Requeued: {$requeuedCount}");
+        $this->writeDailyEntityLog("DIFF insert={$insertCount} update={$updateCount} skip={$skipCount} requeued={$requeuedCount}");
         Log::info($marker . ' diff', compact('insertCount', 'updateCount', 'skipCount', 'requeuedCount'));
         if (empty($toUpsert)) {
             $this->info('Nada que insertar/actualizar.');
@@ -163,6 +171,7 @@ class ProdImportCategories extends Command
                 });
             } catch (\Throwable $e) {
                 $this->error("Chunk {$chunkNum} falló: " . $e->getMessage());
+                $this->writeDailyEntityLog("UPSERT_ERROR chunk={$chunkNum} message=" . $e->getMessage());
                 Log::error($marker . ' chunk failed', [
                     'chunk' => $chunkNum,
                     'chunk_size' => count($chunk),
@@ -174,8 +183,14 @@ class ProdImportCategories extends Command
             $this->line("OK chunk {$chunkNum}/" . count($chunks) . " | {$done}/{$total}");
         }
         $this->info("OK: import completado ({$done} escritos).");
+        $this->writeDailyEntityLog("SUCCESS written={$done}");
         Log::info($marker . ' success', ['written' => $done]);
         return self::SUCCESS;
+    }
+
+    public function __destruct()
+    {
+        $this->closeDailyEntityLog();
     }
 
     private function dbColumns(): array

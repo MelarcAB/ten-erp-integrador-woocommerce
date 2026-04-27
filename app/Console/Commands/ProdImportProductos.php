@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
+use App\Console\Commands\Concerns\WritesDailyEntityLog;
 use App\Integrations\TenClient;
 use App\Integrations\Mappers\TenProductMapper;
 use App\Models\ProductoCategoriaTen;
@@ -13,6 +14,7 @@ use Throwable;
 
 class ProdImportProductos extends Command
 {
+    use WritesDailyEntityLog;
     /**
      * The name and signature of the console command.
      *
@@ -33,6 +35,8 @@ class ProdImportProductos extends Command
     public function handle(): int
     {
         $marker = '[TEN_IMPORT_PROD_PROD v1]';
+        $this->initDailyEntityLog('productos');
+        $this->writeDailyEntityLog($marker . ' INICIO');
         $this->line($marker . ' INICIO');
         Log::info($marker . ' INICIO');
 
@@ -51,6 +55,7 @@ class ProdImportProductos extends Command
                     $modifiedAfter = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $modifiedAfterOpt);
                 } catch (\Throwable) {
                     $this->error('Formato inválido para --modified-after. Usa "YYYY-MM-DD HH:MM:SS" o "all"');
+                    $this->writeDailyEntityLog($marker . ' invalid modified-after value=' . $modifiedAfterOpt);
                     Log::error($marker . ' invalid modified-after', ['value' => $modifiedAfterOpt]);
                     return self::FAILURE;
                 }
@@ -61,11 +66,13 @@ class ProdImportProductos extends Command
             $tenProducts = $client->getProducts($modifiedAfter, 100000, 0);
         } catch (Throwable $e) {
             $this->error('Error TEN: ' . $e->getMessage());
+            $this->writeDailyEntityLog($marker . ' TEN ERROR: ' . $e->getMessage());
             Log::error($marker . ' TEN call failed', ['error' => $e->getMessage()]);
             return self::FAILURE;
         }
 
         $totalFetched = count($tenProducts);
+        $this->writeDailyEntityLog("FETCH count={$totalFetched}");
         $this->info("Recibidos: {$totalFetched}");
         Log::info($marker . ' fetched', ['count' => $totalFetched]);
         if ($totalFetched === 0) return self::SUCCESS;
@@ -199,6 +206,13 @@ class ProdImportProductos extends Command
             'skipped_no_categoria' => $skippedNoCategoria,
             'categoria_errors' => $categoriaErrors,
         ]);
+        $this->writeDailyEntityLog(
+            "MAP valid_rows=" . count($rows)
+            . " skipped_no_ten_id={$skippedNoTenId}"
+            . " skipped_blocked={$skippedBlocked}"
+            . " skipped_no_categoria={$skippedNoCategoria}"
+            . " categoria_errors={$categoriaErrors}"
+        );
         if (count($rows) === 0) return self::SUCCESS;
 
         // Dedup por ten_id
@@ -207,6 +221,7 @@ class ProdImportProductos extends Command
         $after = count($rows);
         if ($after !== $before) {
             $this->warn("Dedup: {$before} -> {$after} (quitados " . ($before - $after) . ")");
+            $this->writeDailyEntityLog("DEDUP before={$before} after={$after}");
             Log::warning($marker . ' dedup', ['before' => $before, 'after' => $after]);
         }
 
@@ -285,6 +300,9 @@ class ProdImportProductos extends Command
             'categoryChangedCount',
             'categoryOnlyUpdateCount'
         ));
+        $this->writeDailyEntityLog(
+            "DIFF insert={$insertCount} update={$updateCount} skip={$skipCount} requeued={$requeuedCount} category_changed={$categoryChangedCount} category_only={$categoryOnlyUpdateCount}"
+        );
         $done = 0;
         if (!empty($toUpsert)) {
             $updateColumns = array_values(array_diff(array_keys($toUpsert[0]), ['ten_id', 'created_at']));
@@ -305,6 +323,7 @@ class ProdImportProductos extends Command
                     });
                 } catch (\Throwable $e) {
                     $this->error("Chunk {$chunkNum} falló: " . $e->getMessage());
+                    $this->writeDailyEntityLog("UPSERT_ERROR chunk={$chunkNum} message=" . $e->getMessage());
                     Log::error($marker . ' chunk failed', [
                         'chunk' => $chunkNum,
                         'chunk_size' => count($chunk),
@@ -325,12 +344,19 @@ class ProdImportProductos extends Command
             Log::info($marker . ' pivot synced', ['rows' => $syncedPivotRows, 'products' => count($tenIds)]);
         } catch (Throwable $e) {
             $this->error('Error sincronizando pivote producto-categorías: ' . $e->getMessage());
+            $this->writeDailyEntityLog('PIVOT_SYNC_ERROR message=' . $e->getMessage());
             Log::error($marker . ' pivot sync failed', ['message' => $e->getMessage()]);
             return self::FAILURE;
         }
         $this->info("OK: import completado ({$done} escritos).");
+        $this->writeDailyEntityLog("SUCCESS written={$done}");
         Log::info($marker . ' success', ['written' => $done]);
         return self::SUCCESS;
+    }
+
+    public function __destruct()
+    {
+        $this->closeDailyEntityLog();
     }
 
     /**

@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Console\Commands\Concerns\WritesDailyEntityLog;
 use App\Integrations\Mappers\WooCustomerAddressMapper;
 use App\Integrations\Mappers\WooCustomerMapper;
 use App\Integrations\WooCommerceClient;
@@ -15,6 +16,7 @@ use Throwable;
 
 class ProdImportClients extends Command
 {
+    use WritesDailyEntityLog;
     /**
      * The name and signature of the console command.
      *
@@ -33,7 +35,7 @@ class ProdImportClients extends Command
      *
      * @var string
      */
-    protected $description = 'Importa clientes desde WooCommerce a BD (producción). También intenta sacar direcciones desde el primer pedido.';
+    protected $description = 'Importa clientes desde WooCommerce a BD (producción). Importa direcciones billing/shipping del cliente y usa el primer pedido solo como fallback.';
 
     /**
      * Execute the console command.
@@ -41,6 +43,8 @@ class ProdImportClients extends Command
     public function handle(): int
     {
         $marker = '[WC_CUSTOMERS_PROD_IMPORT v1]';
+        $this->initDailyEntityLog('clientes');
+        $this->writeDailyEntityLog($marker . ' start');
         $this->line($marker . ' start');
         Log::info($marker . ' start');
 
@@ -67,12 +71,14 @@ class ProdImportClients extends Command
                 $this->info("GET /customers?per_page={$perPage}&page={$page}");
                 $customers = $client->getClientes($perPage, $page);
             } catch (Throwable $e) {
+                $this->writeDailyEntityLog($marker . ' WC ERROR: ' . $e->getMessage());
                 $this->error($marker . ' WC ERROR: ' . $e->getMessage());
                 Log::error($marker . ' WC call failed', ['error' => $e->getMessage(), 'page' => $page]);
                 return self::FAILURE;
             }
 
             $totalFetched = count($customers);
+            $this->writeDailyEntityLog("FETCH page={$page} count={$totalFetched}");
             $this->info("Página {$page} recibida: {$totalFetched}");
             Log::info($marker . ' fetched', ['count' => $totalFetched, 'page' => $page]);
 
@@ -110,6 +116,7 @@ class ProdImportClients extends Command
             }
 
             $this->line("Mapeados: " . count($rows) . " | sin woocommerce_id: {$skippedNoWooId}");
+            $this->writeDailyEntityLog("MAP page={$page} valid_rows=" . count($rows) . " skipped_no_woocommerce_id={$skippedNoWooId}");
             Log::info($marker . ' mapped', ['valid_rows' => count($rows), 'skipped_no_woocommerce_id' => $skippedNoWooId]);
 
             if (empty($rows)) {
@@ -153,6 +160,7 @@ class ProdImportClients extends Command
             $skipCount = count($rows) - $insertCount;
 
             $this->info("Insert: {$insertCount} | Skip (existentes): {$skipCount}");
+            $this->writeDailyEntityLog("DIFF page={$page} insert={$insertCount} skip_existing={$skipCount}");
             Log::info($marker . ' diff', compact('insertCount', 'skipCount'));
 
             if ($dryRun) {
@@ -182,6 +190,7 @@ class ProdImportClients extends Command
                             Cliente::upsert($chunk, ['woocommerce_id'], $updateColumns);
                         });
                     } catch (QueryException $e) {
+                        $this->writeDailyEntityLog("UPSERT_CLIENTS_ERROR chunk={$chunkNum} message=" . $e->getMessage());
                         $this->error("Chunk {$chunkNum} petó: " . $e->getMessage());
                         Log::error($marker . ' chunk failed', [
                             'chunk' => $chunkNum,
@@ -191,6 +200,7 @@ class ProdImportClients extends Command
                         ]);
                         return self::FAILURE;
                     } catch (Throwable $e) {
+                        $this->writeDailyEntityLog("UPSERT_CLIENTS_ERROR chunk={$chunkNum} message=" . $e->getMessage());
                         $this->error("Chunk {$chunkNum} petó: " . $e->getMessage());
                         Log::error($marker . ' chunk failed (throwable)', [
                             'chunk' => $chunkNum,
@@ -210,14 +220,19 @@ class ProdImportClients extends Command
             // --- NIF desde el primer pedido (meta _billing_wooccm9) ---
             $this->autoEnrichNifFromOrders($client, $wooIds, $now, $marker);
 
-            // --- Direcciones desde el primer pedido (si existe) ---
-            $addressesWritten = $this->importAddressesFromFirstOrders($client, $wooIds, $now, $marker);
-            $totalAddressesWritten += $addressesWritten;
+            // --- Direcciones desde la ficha del cliente Woo ---
+            $addressesFromCustomers = $this->importAddressesFromCustomers($customers, $now, $marker);
+            $totalAddressesWritten += $addressesFromCustomers;
+
+            // --- Fallback desde el primer pedido solo si falta billing/shipping útil ---
+            $addressesFromOrders = $this->importAddressesFromFirstOrders($client, $customers, $now, $marker);
+            $totalAddressesWritten += $addressesFromOrders;
 
             $page++;
             $pagesDone++;
         }
 
+        $this->writeDailyEntityLog("SUCCESS written_clients={$totalWritten} written_addresses={$totalAddressesWritten}");
         $this->info("OK: import completado. clientes escritos={$totalWritten} | direcciones escritas={$totalAddressesWritten}");
         Log::info($marker . ' success', ['written_clients' => $totalWritten, 'written_addresses' => $totalAddressesWritten]);
 
@@ -225,18 +240,95 @@ class ProdImportClients extends Command
     }
 
     /**
-     * Para cada cliente, consulta su primer pedido y guarda direcciones billing/shipping.
+     * Importa direcciones billing/shipping directamente del customer de WooCommerce.
+     *
+     * @param array<int, array<string,mixed>> $customers
      */
-    private function importAddressesFromFirstOrders(WooCommerceClient $client, array $wooIds, $now, string $marker): int
+    private function importAddressesFromCustomers(array $customers, $now, string $marker): int
     {
-        $wooIds = array_values(array_unique(array_filter($wooIds, fn ($v) => (int) $v > 0)));
+        if (empty($customers)) return 0;
+
+        $dbCols = $this->direccionDbColumns();
+        $dbColsFlip = array_flip($dbCols);
+
+        $wooIds = collect($customers)
+            ->pluck('id')
+            ->filter()
+            ->map(fn ($v) => (int) $v)
+            ->unique()
+            ->values()
+            ->all();
+
         if (empty($wooIds)) return 0;
+
+        $clientesWooIds = Cliente::query()
+            ->whereIn('woocommerce_id', $wooIds)
+            ->pluck('woocommerce_id')
+            ->map(fn ($v) => (int) $v)
+            ->all();
+        $clientesWooIds = array_flip($clientesWooIds);
+
+        $rows = [];
+        foreach ($customers as $wcCustomer) {
+            if (!is_array($wcCustomer)) continue;
+
+            $wooId = (int) ($wcCustomer['id'] ?? 0);
+            if ($wooId <= 0 || !isset($clientesWooIds[$wooId])) continue;
+
+            $dirs = WooCustomerAddressMapper::toDirecciones($wcCustomer);
+            foreach ($dirs as $attrs) {
+                if (!is_array($attrs)) continue;
+                if (!$this->hasMeaningfulAddressData($attrs)) continue;
+
+                $attrs['cliente_id'] = $wooId;
+                $attrs['sync_status'] = 'pending';
+                $attrs['last_error'] = null;
+                $attrs['ten_last_fetched_at'] = $now;
+                $attrs['ten_hash'] = WooCustomerAddressMapper::hashFromAttributes($attrs);
+                $attrs['created_at'] = $now;
+                $attrs['updated_at'] = $now;
+
+                $rows[] = array_intersect_key($attrs, $dbColsFlip);
+            }
+        }
+
+        return $this->upsertAddressRows($rows, $marker, 'customer');
+    }
+
+    /**
+     * Para cada cliente, consulta su primer pedido y guarda direcciones billing/shipping
+     * solo si en /customers faltan o vienen vacías.
+     *
+     * @param array<int, array<string,mixed>> $customers
+     */
+    private function importAddressesFromFirstOrders(WooCommerceClient $client, array $customers, $now, string $marker): int
+    {
+        if (empty($customers)) return 0;
 
         $dbCols = $this->direccionDbColumns();
         $dbColsFlip = array_flip($dbCols);
         $rows = [];
 
-        // Solo clientes existentes en DB
+        $fallbackByCustomerId = [];
+        foreach ($customers as $wcCustomer) {
+            if (!is_array($wcCustomer)) continue;
+
+            $wooId = (int) ($wcCustomer['id'] ?? 0);
+            if ($wooId <= 0) continue;
+
+            $types = $this->addressTypesNeedingFallback($wcCustomer);
+            if (!empty($types)) {
+                $fallbackByCustomerId[$wooId] = $types;
+            }
+        }
+
+        if (empty($fallbackByCustomerId)) {
+            $this->writeDailyEntityLog('ADDRESSES_FALLBACK no_missing_types');
+            $this->line('Direcciones fallback pedido: no hace falta completar ninguna dirección.');
+            return 0;
+        }
+
+        $wooIds = array_keys($fallbackByCustomerId);
         $clientesWooIds = Cliente::query()
             ->whereIn('woocommerce_id', $wooIds)
             ->pluck('woocommerce_id')
@@ -267,7 +359,13 @@ class ProdImportClients extends Command
                 $dirs = $this->mapOrderAddresses($order, $wcCustomerId);
 
                 foreach ($dirs as $attrs) {
+                    if (!in_array((string) ($attrs['tipo'] ?? ''), $fallbackByCustomerId[$wcCustomerId] ?? [], true)) {
+                        continue;
+                    }
                     if (empty($attrs['woocommerce_customer_id']) || empty($attrs['tipo'])) {
+                        continue;
+                    }
+                    if (!$this->hasMeaningfulAddressData($attrs)) {
                         continue;
                     }
 
@@ -282,6 +380,7 @@ class ProdImportClients extends Command
                     $rows[] = array_intersect_key($attrs, $dbColsFlip);
                 }
             } catch (Throwable $e) {
+                $this->writeDailyEntityLog("ADDRESSES_FALLBACK_FETCH_ERROR customer={$wcCustomerId} message=" . $e->getMessage());
                 $errors++;
                 $this->warn("Direcciones: error consultando pedidos customer={$wcCustomerId}: " . $e->getMessage());
                 Log::warning($marker . ' orders fetch failed', [
@@ -291,18 +390,34 @@ class ProdImportClients extends Command
             }
         }
 
-        if (empty($rows)) {
-            $this->line("Direcciones: sin filas (no_orders={$noOrders}, errors={$errors})");
+        $done = $this->upsertAddressRows($rows, $marker, 'first_order_fallback');
+        if ($done === 0) {
+            $this->writeDailyEntityLog("ADDRESSES_FALLBACK_EMPTY no_orders={$noOrders} errors={$errors}");
+            $this->line("Direcciones fallback pedido: sin filas útiles (no_orders={$noOrders}, errors={$errors})");
             return 0;
         }
 
-        // dedup por woo_customer_id + tipo
+        $this->writeDailyEntityLog("ADDRESSES_FALLBACK written={$done} no_orders={$noOrders} errors={$errors}");
+        $this->info("Direcciones fallback pedido: escritas {$done} (no_orders={$noOrders}, errors={$errors})");
+        return $done;
+    }
+
+    /**
+     * @param array<int, array<string,mixed>> $rows
+     */
+    private function upsertAddressRows(array $rows, string $marker, string $source): int
+    {
+        if (empty($rows)) {
+            $this->writeDailyEntityLog("ADDRESSES_{$source} rows=0");
+            $this->line("Direcciones {$source}: sin filas.");
+            return 0;
+        }
+
         $rows = collect($rows)
             ->keyBy(fn ($r) => (int)$r['woocommerce_customer_id'] . ':' . (string)$r['tipo'])
             ->values()
             ->all();
 
-        // Comparar contra DB para evitar updates innecesarios
         $pairs = collect($rows)
             ->map(fn ($r) => [(int)$r['woocommerce_customer_id'], (string)$r['tipo']])
             ->values()
@@ -333,7 +448,8 @@ class ProdImportClients extends Command
         }
 
         if (empty($toUpsert)) {
-            $this->line('Direcciones: sin cambios (skip total).');
+            $this->writeDailyEntityLog("ADDRESSES_{$source} unchanged=1");
+            $this->line("Direcciones {$source}: sin cambios (skip total).");
             return 0;
         }
 
@@ -352,8 +468,10 @@ class ProdImportClients extends Command
                     Direcciones::upsert($chunk, ['woocommerce_customer_id', 'tipo'], $updateColumns);
                 });
             } catch (Throwable $e) {
-                $this->warn("Direcciones: chunk {$chunkNum} falló: " . $e->getMessage());
+                $this->writeDailyEntityLog("ADDRESSES_{$source}_ERROR chunk={$chunkNum} message=" . $e->getMessage());
+                $this->warn("Direcciones {$source}: chunk {$chunkNum} falló: " . $e->getMessage());
                 Log::warning($marker . ' addresses upsert failed', [
+                    'source' => $source,
                     'chunk' => $chunkNum,
                     'chunk_size' => count($chunk),
                     'message' => $e->getMessage(),
@@ -364,8 +482,51 @@ class ProdImportClients extends Command
             $done += count($chunk);
         }
 
-        $this->info("Direcciones: escritas {$done} (no_orders={$noOrders}, errors={$errors})");
+        $this->writeDailyEntityLog("ADDRESSES_{$source} written={$done}");
+        $this->info("Direcciones {$source}: escritas {$done}");
         return $done;
+    }
+
+    /**
+     * @param array<string,mixed> $wcCustomer
+     * @return array<int, string>
+     */
+    private function addressTypesNeedingFallback(array $wcCustomer): array
+    {
+        $missing = [];
+        foreach (['billing', 'shipping'] as $tipo) {
+            $addr = $wcCustomer[$tipo] ?? null;
+            if (!is_array($addr) || !$this->hasMeaningfulAddressData($addr)) {
+                $missing[] = $tipo;
+            }
+        }
+
+        return $missing;
+    }
+
+    /**
+     * @param array<string,mixed> $attrs
+     */
+    private function hasMeaningfulAddressData(array $attrs): bool
+    {
+        foreach ([
+            'company',
+            'address_1',
+            'address_2',
+            'city',
+            'postcode',
+            'state',
+            'country',
+            'email',
+            'phone',
+        ] as $field) {
+            $value = $attrs[$field] ?? null;
+            if (is_string($value) && trim($value) !== '') {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -450,6 +611,7 @@ class ProdImportClients extends Command
 
                 if ($affected) $enriched++;
             } catch (Throwable $e) {
+                $this->writeDailyEntityLog("ENRICH_NIF_ERROR customer={$wcCustomerId} message=" . $e->getMessage());
                 $errors++;
                 Log::warning($marker . ' enrich nif failed', [
                     'woocommerce_customer_id' => $wcCustomerId,
@@ -458,6 +620,7 @@ class ProdImportClients extends Command
             }
         }
 
+        $this->writeDailyEntityLog("ENRICH_NIF ok={$enriched} not_found={$notFound} errors={$errors}");
         $this->info("Enrich NIF: ok={$enriched} | no encontrado={$notFound} | errores={$errors}");
         Log::info($marker . ' enrich nif done', compact('enriched','notFound','errors'));
     }
@@ -603,5 +766,10 @@ class ProdImportClients extends Command
             'updated_at',
             'deleted_at',
         ];
+    }
+
+    public function __destruct()
+    {
+        $this->closeDailyEntityLog();
     }
 }

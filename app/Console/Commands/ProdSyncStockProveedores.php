@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Console\Commands\Concerns\WritesDailyEntityLog;
 use App\Integrations\WooCommerceClient;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
@@ -10,6 +11,7 @@ use Throwable;
 
 class ProdSyncStockProveedores extends Command
 {
+    use WritesDailyEntityLog;
     protected $signature = 'app:prod-sync-stock-proveedores
         {--dry-run : No actualiza Woo}
         {--limit=0 : Límite de filas a procesar (0 = sin límite)}
@@ -23,10 +25,13 @@ class ProdSyncStockProveedores extends Command
     public function handle(): int
     {
         $marker = '[STOCK_PROVEEDORES v3]';
+        $this->initDailyEntityLog('stocks');
+        $this->writeDailyEntityLog($marker . ' start');
         $this->line($marker . ' start');
 
         $dryRun = (bool) $this->option('dry-run');
         $this->warn('Comando legado: usando app:prod-sync-stocks como fuente única de verdad para stock y reservas.');
+        $this->writeDailyEntityLog($marker . ' delegated dry_run=' . ($dryRun ? '1' : '0'));
         Log::warning($marker . ' deprecated command delegated', ['dry_run' => $dryRun]);
 
         return $this->call('app:prod-sync-stocks', array_filter([
@@ -244,6 +249,11 @@ class ProdSyncStockProveedores extends Command
             }
             @unlink($tmp);
         }
+    }
+
+    public function __destruct()
+    {
+        $this->closeDailyEntityLog();
     }
 
     /**

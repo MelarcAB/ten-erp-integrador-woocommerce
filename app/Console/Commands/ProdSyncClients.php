@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Console\Commands\Concerns\WritesDailyEntityLog;
 use App\Integrations\TenClient;
 use App\Models\Cliente;
 use App\Models\Direcciones;
@@ -13,6 +14,7 @@ use Throwable;
 
 class ProdSyncClients extends Command
 {
+    use WritesDailyEntityLog;
     /**
      * The name and signature of the console command.
      *
@@ -40,6 +42,8 @@ class ProdSyncClients extends Command
     public function handle(): int
     {
         $marker = '[TEN_CUSTOMERS_SYNC_PROD v1]';
+        $this->initDailyEntityLog('clientes');
+        $this->writeDailyEntityLog($marker . ' start');
         $this->line($marker . ' start');
         Log::info($marker . ' start');
 
@@ -54,6 +58,7 @@ class ProdSyncClients extends Command
         }
         $importExit = $this->call('app:prod-import-clients', $importArgs);
         if ($importExit !== self::SUCCESS) {
+            $this->writeDailyEntityLog($marker . ' pre-sync woo import failed');
             $this->error('Falló el import local desde WooCommerce. Se aborta sync a TEN.');
             Log::error($marker . ' pre-sync woo import failed', ['exit_code' => $importExit, 'dry_run' => $dryRun]);
             return self::FAILURE;
@@ -82,12 +87,14 @@ class ProdSyncClients extends Command
                 ? $ten->getCustomersLegacy($modifiedAfter)
                 : $ten->getCustomers($modifiedAfter);
         } catch (Throwable $e) {
+            $this->writeDailyEntityLog($marker . ' TEN GET error: ' . $e->getMessage());
             $this->error($marker . ' TEN GET error: ' . $e->getMessage());
             Log::error($marker . ' ten get failed', ['error' => $e->getMessage()]);
             return self::FAILURE;
         }
 
         $this->info('TEN customers recibidos: ' . count($tenCustomers));
+        $this->writeDailyEntityLog('TEN_GET customers=' . count($tenCustomers));
 
         // Indexar por email
         $tenByEmail = [];
@@ -137,6 +144,7 @@ class ProdSyncClients extends Command
         }
 
         $this->info("Vinculados por email (TEN->DB): {$linked}" . ($dryRun ? ' (dry-run)' : ''));
+        $this->writeDailyEntityLog("LINKED_BY_EMAIL count={$linked} dry_run=" . ($dryRun ? '1' : '0'));
 
         // 3) Envío a TEN de pendientes (y opcionalmente errores)
         $statuses = ['pending'];
@@ -163,6 +171,7 @@ class ProdSyncClients extends Command
         }
 
         $this->info('Pendientes locales: ' . $pending->count());
+        $this->writeDailyEntityLog('PENDING count=' . $pending->count() . ' statuses=' . implode(',', $statuses));
 
         if ($pending->isEmpty()) {
             $this->info($marker . ' done (no pending)');
@@ -185,12 +194,14 @@ class ProdSyncClients extends Command
                     $cliente->save();
                 }
                 $skippedAlreadyExists++;
+                $this->writeDailyEntityLog("CUSTOMER_EXISTS email={$cliente->email} woo_id=" . ($cliente->woocommerce_id ?? $cliente->getKey()));
                 continue;
             }
 
             $clientePayload = $this->mapClienteToTenPayload($cliente);
 
             if ($dryRun) {
+                $this->writeDailyEntityLog('PAYLOAD ' . json_encode($clientePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
                 $this->line('DRY RUN customer payload: ' . json_encode($clientePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
                 $created++;
                 continue;
@@ -229,6 +240,7 @@ class ProdSyncClients extends Command
 
                     $ident = $cliente->woocommerce_id ?? $cliente->getKey();
                     $this->error("TEN error cliente woo_id={$ident} email={$cliente->email}: {$errMsg}");
+                    $this->writeDailyEntityLog("CUSTOMER_ERROR woo_id={$ident} email={$cliente->email} message={$errMsg}");
 
                     Log::warning($marker . ' TEN Customers/Set returned error', [
                         'cliente_woocommerce_id' => $ident,
@@ -257,11 +269,6 @@ class ProdSyncClients extends Command
                             break;
                         }
                     }
-                    if ($firstDirTenId !== null) {
-                        $cliente->ten_id_direccion_envio = (string) $firstDirTenId;
-                    }
-
-                    $cliente->save();
 
                     $dirsByCodigo = [];
                     foreach ($parsed['direcciones'] as $d) {
@@ -270,6 +277,7 @@ class ProdSyncClients extends Command
                         $dirsByCodigo[$codigo] = (string)($d['id_ten'] ?? '');
                     }
 
+                    $shippingDirTenId = null;
                     foreach ($cliente->direcciones as $dir) {
                         if (!($dir instanceof Direcciones)) continue;
 
@@ -280,13 +288,20 @@ class ProdSyncClients extends Command
                         $codigoDir = (string)$dir->getKey();
                         if (isset($dirsByCodigo[$codigoDir]) && $dirsByCodigo[$codigoDir] !== '' && $dirsByCodigo[$codigoDir] !== '-1' && $dirsByCodigo[$codigoDir] !== '0') {
                             $dir->ten_id_ten = $dirsByCodigo[$codigoDir];
+                            if ((string) $dir->tipo === 'shipping') {
+                                $shippingDirTenId = $dirsByCodigo[$codigoDir];
+                            }
                         }
 
                         $dir->save();
                     }
+
+                    $cliente->ten_id_direccion_envio = $shippingDirTenId ?? $firstDirTenId ?? $cliente->ten_id_direccion_envio;
+                    $cliente->save();
                 });
 
                 $created++;
+                $this->writeDailyEntityLog("CUSTOMER_OK woo_id={$cliente->woocommerce_id} email={$cliente->email} ten_id=" . ($cliente->ten_id ?? ''));
             } catch (Throwable $e) {
                 $errors++;
                 $msg = $e->getMessage();
@@ -295,6 +310,7 @@ class ProdSyncClients extends Command
 
                 $ident = $cliente->woocommerce_id ?? $cliente->getKey();
                 $this->error("Error cliente woo_id={$ident} email={$cliente->email}: {$msg}");
+                $this->writeDailyEntityLog("CUSTOMER_EXCEPTION woo_id={$ident} email={$cliente->email} message={$msg}");
 
                 Log::error($marker . ' customer set failed', [
                     'cliente_woocommerce_id' => $ident,
@@ -306,6 +322,7 @@ class ProdSyncClients extends Command
         }
 
         $this->info("Resultado: created(sent)={$created} | existed(linked)={$skippedAlreadyExists} | errors={$errors}");
+        $this->writeDailyEntityLog("END created={$created} existed={$skippedAlreadyExists} errors={$errors}");
         Log::info($marker . ' done', compact('created', 'skippedAlreadyExists', 'errors'));
 
         return $errors > 0 ? self::FAILURE : self::SUCCESS;
@@ -320,7 +337,15 @@ class ProdSyncClients extends Command
     private function mapClienteToTenPayload(Cliente $cliente): array
     {
         $dirs = [];
-        foreach ($cliente->direcciones as $dir) {
+        $direcciones = $cliente->direcciones
+            ->sortBy(fn ($dir) => match ((string) ($dir->tipo ?? '')) {
+                'billing' => 0,
+                'shipping' => 1,
+                default => 2,
+            })
+            ->values();
+
+        foreach ($direcciones as $dir) {
             if (!$dir instanceof Direcciones) continue;
 
             $dirPayload = [
@@ -345,11 +370,13 @@ class ProdSyncClients extends Command
             $dirs[] = $dirPayload;
         }
 
-        // TEN requiere que la primera dirección tenga IdTen = -1 para asociarla al cliente.
-        if (!empty($dirs)) {
-            $first = $dirs[0];
-            $first['IdTen'] = '-1';
-            array_unshift($dirs, $first);
+        // En creación, TEN necesita una copia de la dirección principal con Codigo=-1
+        // para asociarla al cliente, manteniendo además las direcciones normales.
+        if (!empty($dirs) && empty($cliente->ten_id)) {
+            $principal = $dirs[0];
+            $principal['Codigo'] = '-1';
+            unset($principal['IdTen']);
+            array_unshift($dirs, $principal);
         }
 
         if (empty($dirs)) {
@@ -434,5 +461,10 @@ class ProdSyncClients extends Command
             'exceptions' => is_array($item['Exceptions'] ?? null) ? $item['Exceptions'] : [],
             'direcciones' => $direcciones,
         ];
+    }
+
+    public function __destruct()
+    {
+        $this->closeDailyEntityLog();
     }
 }

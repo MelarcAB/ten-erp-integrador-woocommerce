@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
+use App\Console\Commands\Concerns\WritesDailyEntityLog;
 use App\Models\Categoria;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -10,6 +11,7 @@ use App\Integrations\WooCommerceClient;
 
 class ProdSyncCategorias extends Command
 {
+    use WritesDailyEntityLog;
     /**
      * The name and signature of the console command.
      *
@@ -30,6 +32,8 @@ class ProdSyncCategorias extends Command
     public function handle()
     {
         $marker = '[PROD_SYNC_CATEGORIAS v2]';
+        $this->initDailyEntityLog('categorias');
+        $this->writeDailyEntityLog($marker . ' start');
         $this->line($marker . ' start');
         Log::info($marker . ' start');
 
@@ -38,6 +42,7 @@ class ProdSyncCategorias extends Command
         $importExit = $this->call('app:prod-import-categories');
         if ($importExit !== self::SUCCESS) {
             $this->error('Falló el import de categorías desde TEN. Se aborta sync.');
+            $this->writeDailyEntityLog($marker . ' pre-sync import failed exit_code=' . $importExit);
             Log::error($marker . ' pre-sync import failed', ['exit_code' => $importExit]);
             return self::FAILURE;
         }
@@ -56,6 +61,7 @@ class ProdSyncCategorias extends Command
             ->get();
         $total = $cats->count();
         $this->info("Seleccionadas: {$total}");
+        $this->writeDailyEntityLog("SELECTED count={$total} no_create=" . ($noCreate ? '1' : '0'));
         Log::info($marker . ' selected', ['count' => $total]);
         if ($total === 0) return self::SUCCESS;
 
@@ -111,6 +117,7 @@ class ProdSyncCategorias extends Command
                     $errors++;
                     $msg = 'Categoría sin ten_id_numero o sin nombre usable';
                     $this->warn("{$progressPrefix} ERROR: {$msg}");
+                    $this->writeDailyEntityLog("CATEGORY_ERROR ten_id={$tenId} message={$msg}");
                     Log::warning($marker . ' item error', ['ten_id' => $tenId, 'reason' => $msg]);
                     $c->markError($msg);
                     $processedOverall++;
@@ -120,6 +127,7 @@ class ProdSyncCategorias extends Command
                     $errors++;
                     $msg = 'Categoría con parent igual a sí misma (ciclo)';
                     $this->warn("{$progressPrefix} ERROR: {$msg}");
+                    $this->writeDailyEntityLog("CATEGORY_ERROR ten_id={$tenId} message={$msg}");
                     Log::warning($marker . ' item error', ['ten_id' => $tenId, 'slug' => $slug, 'reason' => $msg]);
                     $c->markError($msg);
                     $processedOverall++;
@@ -146,6 +154,7 @@ class ProdSyncCategorias extends Command
                                 $c->markSynced();
                                 $wooIdByTenId[$tenId] = $wcId;
                                 $this->line("{$progressPrefix} UPDATE NAME WooCat#{$wcId} '{$wooName}' -> '{$name}'");
+                                $this->writeDailyEntityLog("CATEGORY_UPDATE ten_id={$tenId} woo_id={$wcId} slug={$slug}");
                                 $updated++;
                                 $synced++;
                                 $progressThisPass++;
@@ -156,6 +165,7 @@ class ProdSyncCategorias extends Command
                             $c->markSynced();
                             $wooIdByTenId[$tenId] = $wooIdInDb;
                             $this->line("{$progressPrefix} OK WooCat#{$wooIdInDb} exists (skip update)");
+                            $this->writeDailyEntityLog("CATEGORY_VALIDATE ten_id={$tenId} woo_id={$wooIdInDb} slug={$slug}");
                             $validated++;
                             $synced++;
                             $progressThisPass++;
@@ -209,6 +219,7 @@ class ProdSyncCategorias extends Command
                             $wooIdByTenId[$tenId] = $wooId;
                             $wooIdBySlugParent[$this->slugParentKey($slug, $foundParent)] = $wooId;
                             $this->line("{$progressPrefix} LINK (por slug, parent ignorado) WooCat#{$wooId} slug={$slug} parent={$foundParent}");
+                            $this->writeDailyEntityLog("CATEGORY_LINK ten_id={$tenId} woo_id={$wooId} slug={$slug} parent={$foundParent}");
                             $linked++;
                             $synced++;
                             $progressThisPass++;
@@ -226,6 +237,7 @@ class ProdSyncCategorias extends Command
                         $wooIdByTenId[$tenId] = $wcId;
                         $wooIdBySlugParent[$this->slugParentKey($slug, $wcParent)] = $wcId;
                         $this->line("{$progressPrefix} LINK WooCat#{$wcId} slug={$slug} parent={$wcParent}");
+                        $this->writeDailyEntityLog("CATEGORY_LINK ten_id={$tenId} woo_id={$wcId} slug={$slug} parent={$wcParent}");
                         $linked++;
                         $updated++;
                         $synced++;
@@ -258,11 +270,13 @@ class ProdSyncCategorias extends Command
                     $wooIdByTenId[$tenId] = $wcId;
                     $wooIdBySlugParent[$this->slugParentKey($slug, $wcParent)] = $wcId;
                     $this->line("{$progressPrefix} CREATE WooCat#{$wcId} slug={$slug} parent={$wcParent}");
+                    $this->writeDailyEntityLog("CATEGORY_CREATE ten_id={$tenId} woo_id={$wcId} slug={$slug} parent={$wcParent}");
                     $created++;
                     $synced++;
                     $progressThisPass++;
                     $processedOverall++;
                 } catch (Throwable $e) {
+                    $this->writeDailyEntityLog("CATEGORY_EXCEPTION ten_id={$tenId} slug={$slug} message=" . $e->getMessage());
                     $errors++;
                     $err = $e->getMessage();
                     $this->warn("{$progressPrefix} ERROR slug={$slug}: {$err}");
@@ -286,7 +300,13 @@ class ProdSyncCategorias extends Command
         }
         $this->info("OK fin. synced={$synced} | validated={$validated} | created={$created} | linked={$linked} | updated={$updated} | skipped={$skipped} | errors={$errors}");
         Log::info($marker . ' done', compact('synced','validated','created','linked','updated','skipped','errors'));
+        $this->writeDailyEntityLog("END synced={$synced} validated={$validated} created={$created} linked={$linked} updated={$updated} skipped={$skipped} errors={$errors}");
         return $errors > 0 ? self::FAILURE : self::SUCCESS;
+    }
+
+    public function __destruct()
+    {
+        $this->closeDailyEntityLog();
     }
 
     private function categoriaNombre(Categoria $c): string

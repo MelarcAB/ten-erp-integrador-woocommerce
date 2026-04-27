@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Console\Commands\Concerns\WritesDailyEntityLog;
 use App\Helpers\ProveedorStockHelper;
 use App\Integrations\TenClient;
 use App\Integrations\WooCommerceClient;
@@ -12,6 +13,7 @@ use Throwable;
 
 class ProdSyncStocks extends Command
 {
+    use WritesDailyEntityLog;
     protected $signature = 'app:prod-sync-stocks
         {--dry-run : No escribe cambios en Woo}
         {--chunk-size=1000 : Tamaño de chunk interno para construir mapas TEN}
@@ -33,6 +35,8 @@ class ProdSyncStocks extends Command
         $tenOnly = (bool) $this->option('ten-only');
         $providerUrl = trim((string) $this->option('provider-url'));
 
+        $this->initDailyEntityLog('stocks');
+        $this->writeDailyEntityLog($marker . ' start');
         $this->line($marker . ' start');
         Log::info($marker . ' start', [
             'dry_run' => $dryRun,
@@ -53,6 +57,7 @@ class ProdSyncStocks extends Command
             $stocks = $tenClient->getStocks();
         } catch (Throwable $e) {
             $this->error('Error TEN Stocks/Get: ' . $e->getMessage());
+            $this->writeDailyEntityLog($marker . ' ten stocks failed: ' . $e->getMessage());
             Log::error($marker . ' ten stocks failed', ['error' => $e->getMessage()]);
             return self::FAILURE;
         }
@@ -89,6 +94,7 @@ class ProdSyncStocks extends Command
             $tenProducts = $tenClient->getProducts(Carbon::create(2020, 1, 1, 0, 0, 0), 100000, 0);
         } catch (Throwable $e) {
             $this->error('Error TEN Products/Get: ' . $e->getMessage());
+            $this->writeDailyEntityLog($marker . ' ten products failed: ' . $e->getMessage());
             Log::error($marker . ' ten products failed', ['error' => $e->getMessage()]);
             return self::FAILURE;
         }
@@ -156,6 +162,7 @@ class ProdSyncStocks extends Command
                 );
             } catch (Throwable $e) {
                 $this->error('Error proveedor: ' . $e->getMessage());
+                $this->writeDailyEntityLog($marker . ' provider failed: ' . $e->getMessage());
                 Log::error($marker . ' provider failed', ['error' => $e->getMessage(), 'url' => $providerUrl]);
                 return self::FAILURE;
             }
@@ -183,6 +190,7 @@ class ProdSyncStocks extends Command
                 ]);
             } catch (Throwable $e) {
                 $this->error('Error Woo al listar productos: ' . $e->getMessage());
+                $this->writeDailyEntityLog($marker . ' woo list failed page=' . $page . ' message=' . $e->getMessage());
                 Log::error($marker . ' woo list failed', ['page' => $page, 'error' => $e->getMessage()]);
                 return self::FAILURE;
             }
@@ -381,8 +389,16 @@ class ProdSyncStocks extends Command
             'ten_only' => $tenOnly,
             'provider_url' => $providerUrl,
         ]);
+        $this->writeDailyEntityLog(
+            "END woo_processed={$processedWoo} queued={$queued} updated={$updated} woo_errors={$wooErrors} ten_positive={$tenPositive} ten_zero_provider_positive={$tenZeroProviderPositive} ten_zero_reservable={$tenZeroReservable} provider_only_positive={$providerOnlyPositive} provider_only_zero_reservable={$providerOnlyZeroReservable} untouched_woo_only={$untouchedWooOnly} matched_by_sku={$matchedBySku} matched_by_ean={$matchedByEan} dry_run=" . ($dryRun ? '1' : '0')
+        );
 
         return $wooErrors > 0 ? self::FAILURE : self::SUCCESS;
+    }
+
+    public function __destruct()
+    {
+        $this->closeDailyEntityLog();
     }
 
     /**

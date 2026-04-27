@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Console\Commands\Concerns\WritesDailyEntityLog;
 use App\Helpers\ProveedorStockHelper;
 use App\Integrations\TenClient;
 use App\Integrations\WooCommerceClient;
@@ -13,6 +14,7 @@ use Throwable;
 
 class ProdUpdatePrecios extends Command
 {
+    use WritesDailyEntityLog;
     protected $signature = 'app:prod-update-precios
         {--modified-after=all : Fecha "YYYY-MM-DD HH:MM:SS" o "all"}
         {--items=100000 : Items por página en TEN}
@@ -37,6 +39,8 @@ class ProdUpdatePrecios extends Command
         $chunkSize = max(100, (int) $this->option('chunk-size'));
         $batchSize = max(1, min(100, (int) $this->option('batch-size')));
 
+        $this->initDailyEntityLog('precios');
+        $this->writeDailyEntityLog($marker . ' start');
         $this->line($marker . ' start');
         Log::info($marker . ' start', [
             'dry_run' => $dryRun,
@@ -53,6 +57,7 @@ class ProdUpdatePrecios extends Command
             $modifiedAfter = $this->parseModifiedAfter((string) ($this->option('modified-after') ?? 'all'));
         } catch (Throwable $e) {
             $this->error($e->getMessage());
+            $this->writeDailyEntityLog($marker . ' invalid modified-after value=' . $this->option('modified-after'));
             Log::error($marker . ' invalid modified-after', ['value' => $this->option('modified-after')]);
             return self::FAILURE;
         }
@@ -67,6 +72,7 @@ class ProdUpdatePrecios extends Command
             $providerStock = ProveedorStockHelper::load('https://tests.takeoffcomunicacion.es/stock_proveedor.csv');
         } catch (Throwable $e) {
             $this->error('Error proveedor: ' . $e->getMessage());
+            $this->writeDailyEntityLog($marker . ' provider failed: ' . $e->getMessage());
             Log::error($marker . ' provider failed', ['error' => $e->getMessage()]);
             return self::FAILURE;
         }
@@ -83,6 +89,7 @@ class ProdUpdatePrecios extends Command
             $tenStocks = $tenClient->getStocks();
         } catch (Throwable $e) {
             $this->error('Error TEN Stocks/Get: ' . $e->getMessage());
+            $this->writeDailyEntityLog($marker . ' ten stocks failed: ' . $e->getMessage());
             Log::error($marker . ' ten stocks failed', ['error' => $e->getMessage()]);
             return self::FAILURE;
         }
@@ -107,6 +114,7 @@ class ProdUpdatePrecios extends Command
             $tenProducts = $tenClient->getProducts($modifiedAfter, $items, $page);
         } catch (Throwable $e) {
             $this->error('Error TEN: ' . $e->getMessage());
+            $this->writeDailyEntityLog($marker . ' ten failed: ' . $e->getMessage());
             Log::error($marker . ' ten failed', ['error' => $e->getMessage()]);
             return self::FAILURE;
         }
@@ -395,8 +403,16 @@ class ProdUpdatePrecios extends Command
             'woo_errors' => $wooErrors,
             'dry_run' => $dryRun,
         ]);
+        $this->writeDailyEntityLog(
+            "END processed={$processed} queued={$queued} updated={$wooUpdated} ten_stock_zero={$tenStockZero} ten_stock_positive={$tenStockPositive} price_source_ten={$priceSourceTen} price_source_provider={$priceSourceProvider} provider_price_missing={$providerPriceMissing} price_locked={$priceLocked} remote_read_errors={$remoteReadErrors} not_found_local={$notFoundLocal} no_woo_id={$noWooId} invalid_rows={$invalidRows} invalid_price={$invalidPrice} batches={$batchCount} woo_errors={$wooErrors} dry_run=" . ($dryRun ? '1' : '0')
+        );
 
         return $wooErrors > 0 ? self::FAILURE : self::SUCCESS;
+    }
+
+    public function __destruct()
+    {
+        $this->closeDailyEntityLog();
     }
 
     private function parseModifiedAfter(string $value): ?Carbon

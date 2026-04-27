@@ -1,0 +1,3 @@
+[2026-04-27 09:50:18] START sync
+[2026-04-27 09:50:18] ORDER woo_id=57497 status=EXCEPTION msg=Cliente sin ten_id (woocommerce_id=5)
+[2026-04-27 09:50:18] END sync sent=0 skipped=0 errors=1

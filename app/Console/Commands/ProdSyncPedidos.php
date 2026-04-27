@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Integrations\TenClient;
 use App\Models\Cliente;
+use App\Models\Direcciones;
 use App\Models\PedidoLineas;
 use App\Models\Pedidos;
 use App\Models\Producto;
@@ -106,7 +107,7 @@ class ProdSyncPedidos extends Command
             $wooOrderId = (int) ($pedido->woocommerce_id ?? 0);
 
             try {
-                $payload = $this->mapPedidoToTenOrderPayload($pedido);
+                $payload = $this->mapPedidoToTenOrderPayload($pedido, $dryRun);
                 $this->writeSyncLog("ORDER woo_id={$wooOrderId} lineas=" . count($payload['Lineas'] ?? []));
                 $this->writeSyncLog('PAYLOAD ' . json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
                 if (!empty($payload['Lineas']) && is_array($payload['Lineas'])) {
@@ -220,12 +221,12 @@ class ProdSyncPedidos extends Command
 
     private function openSyncLog()
     {
-        $dir = storage_path('sync_pedidos');
+        $dir = storage_path('logs');
         if (!is_dir($dir)) {
             @mkdir($dir, 0755, true);
         }
 
-        $filename = 'SYNC-' . now()->format('d-m-Y_H:i') . '.log';
+        $filename = 'log_pedidos_' . now()->format('Ymd') . '.log';
         $path = $dir . DIRECTORY_SEPARATOR . $filename;
 
         return @fopen($path, 'a');
@@ -240,22 +241,25 @@ class ProdSyncPedidos extends Command
     /**
      * Map DB -> payload TEN /Orders/Set (solo creación).
      */
-    private function mapPedidoToTenOrderPayload(Pedidos $pedido): array
+    private function mapPedidoToTenOrderPayload(Pedidos $pedido, bool $allowMock = false): array
     {
         $cliente = Cliente::query()->where('woocommerce_id', (int) $pedido->cliente_id)->first();
         if (!$cliente) {
             throw new \RuntimeException('Cliente no encontrado para pedido (cliente_id=' . (string)$pedido->cliente_id . ')');
         }
-        if (empty($cliente->ten_id)) {
+        if (!$allowMock && empty($cliente->ten_id)) {
             throw new \RuntimeException('Cliente sin ten_id (woocommerce_id=' . (string)$cliente->woocommerce_id . ')');
         }
 
-        $idDireccionEnvio = (string)($cliente->ten_id_direccion_envio ?? '0');
-        if ($idDireccionEnvio === '' || $idDireccionEnvio === '0') {
-            $idDireccionEnvio = '0';
+        $idDireccionFacturacion = $this->resolveTenDireccionId((int) ($pedido->direccion_1_id ?? 0), $allowMock, 'billing') ?? '0';
+        $idDireccionEnvio = $this->resolveTenDireccionId((int) ($pedido->direccion_2_id ?? 0), $allowMock, 'shipping');
+        if ($idDireccionEnvio === null) {
+            $idDireccionEnvio = $idDireccionFacturacion !== '0'
+                ? $idDireccionFacturacion
+                : ($this->normalizeTenId($cliente->ten_id_direccion_envio ?? null)
+                    ?? ($allowMock ? $this->mockTenDireccionId((int) ($pedido->direccion_2_id ?? 0), 'shipping') : null));
         }
-
-        $idDireccionFacturacion = '0';
+        $idDireccionEnvio ??= '0';
 
         $fecha = $pedido->wc_date_created ? $pedido->wc_date_created->format('Y-m-d H:i:s') : now()->format('Y-m-d H:i:s');
         $fechaEntrega = $pedido->wc_date_completed ? $pedido->wc_date_completed->format('Y-m-d H:i:s') : $fecha;
@@ -374,7 +378,8 @@ class ProdSyncPedidos extends Command
             'Codigo' => (string) ($pedido->woocommerce_id ?? $pedido->getKey()),
             'Fecha' => $fecha,
             'FechaEntrega' => $fechaEntrega,
-            'IdCliente' => (string) $cliente->ten_id,
+            'IdCliente' => $this->normalizeTenId($cliente->ten_id ?? null)
+                ?? ($allowMock ? $this->mockTenClienteId((int) $cliente->woocommerce_id) : ''),
             'IdDireccionEnvio' => (string) $idDireccionEnvio,
             'IdDireccionFacturacion' => (string) $idDireccionFacturacion,
             'IdTarifa' => (string) ((int)($cliente->ten_id_tarifa ?? 0)),
@@ -410,5 +415,45 @@ class ProdSyncPedidos extends Command
             'order_id_ten' => isset($item['IdTen']) ? (string)$item['IdTen'] : (isset($item['Id']) ? (string)$item['Id'] : null),
             'exceptions' => is_array($item['Exceptions'] ?? null) ? $item['Exceptions'] : [],
         ];
+    }
+
+    private function resolveTenDireccionId(int $direccionId, bool $allowMock = false, string $kind = 'direccion'): ?string
+    {
+        if ($direccionId <= 0) {
+            return $allowMock ? $this->mockTenDireccionId($direccionId, $kind) : null;
+        }
+
+        $tenId = Direcciones::query()
+            ->whereKey($direccionId)
+            ->value('ten_id_ten');
+
+        return $this->normalizeTenId($tenId)
+            ?? ($allowMock ? $this->mockTenDireccionId($direccionId, $kind) : null);
+    }
+
+    private function normalizeTenId(mixed $tenId): ?string
+    {
+        if ($tenId === null) return null;
+
+        $value = trim((string) $tenId);
+        if ($value === '' || $value === '0' || $value === '-1') {
+            return null;
+        }
+
+        return $value;
+    }
+
+    private function mockTenClienteId(int $woocommerceId): string
+    {
+        return '__MOCK_CLIENT_TEN_ID_' . $woocommerceId . '__';
+    }
+
+    private function mockTenDireccionId(int $direccionId, string $kind): ?string
+    {
+        if ($direccionId <= 0) {
+            return null;
+        }
+
+        return '__MOCK_' . strtoupper($kind) . '_TEN_ID_' . $direccionId . '__';
     }
 }

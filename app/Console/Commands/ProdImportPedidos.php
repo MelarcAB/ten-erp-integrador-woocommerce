@@ -2,8 +2,10 @@
 
 namespace App\Console\Commands;
 
+use App\Console\Commands\Concerns\WritesDailyEntityLog;
 use App\Integrations\WooCommerceClient;
 use App\Models\Cliente;
+use App\Models\Direcciones;
 use App\Models\PedidoLineas;
 use App\Models\Pedidos;
 use Illuminate\Console\Command;
@@ -14,6 +16,7 @@ use Throwable;
 
 class ProdImportPedidos extends Command
 {
+    use WritesDailyEntityLog;
     /**
      * The name and signature of the console command.
      *
@@ -50,6 +53,8 @@ class ProdImportPedidos extends Command
     public function handle(): int
     {
         $marker = '[WC_ORDERS_PROD_IMPORT v1]';
+        $this->initDailyEntityLog('pedidos');
+        $this->writeDailyEntityLog($marker . ' start');
         $this->line($marker . ' start');
         Log::info($marker . ' start');
 
@@ -96,12 +101,14 @@ class ProdImportPedidos extends Command
                 $this->info("GET /orders?{$qs}");
                 $orders = $client->getPedidos($perPage, $page, $params);
             } catch (Throwable $e) {
+                $this->writeDailyEntityLog($marker . ' WC ERROR: ' . $e->getMessage());
                 $this->error($marker . ' WC ERROR: ' . $e->getMessage());
                 Log::error($marker . ' WC call failed', ['error' => $e->getMessage(), 'params' => $params, 'page' => $page]);
                 return self::FAILURE;
             }
 
             $totalFetched = is_array($orders) ? count($orders) : 0;
+            $this->writeDailyEntityLog("FETCH page={$page} count={$totalFetched}");
             $this->info("Página {$page} recibida: {$totalFetched}");
             Log::info($marker . ' fetched', ['count' => $totalFetched, 'params' => $params, 'per_page' => $perPage, 'page' => $page]);
 
@@ -135,6 +142,13 @@ class ProdImportPedidos extends Command
                 $clientesWooIds = array_flip($clientesWooIds);
             }
 
+            $guestClientIdsByOrderId = $this->resolveGuestClientIdsByOrderId($orders);
+            $directionLookupIds = array_values(array_unique(array_merge(
+                $wooCustomerIds,
+                array_values(array_filter($guestClientIdsByOrderId, fn ($v) => (int) $v > 0))
+            )));
+            $direccionesByWooCustomerId = $this->loadDirectionsByWooCustomerId($directionLookupIds);
+
             foreach ($orders as $wcOrder) {
                 if (!is_array($wcOrder)) continue;
 
@@ -145,19 +159,28 @@ class ProdImportPedidos extends Command
                 }
 
                 $wooCustomerId = (int) ($wcOrder['customer_id'] ?? 0);
+                $resolvedGuestClienteId = $guestClientIdsByOrderId[$wooOrderId] ?? null;
 
-                // Si no existe el cliente del pedido -> skip
-                if ($wooCustomerId <= 0 || !isset($clientesWooIds[$wooCustomerId])) {
+                if ($wooCustomerId > 0 && isset($clientesWooIds[$wooCustomerId])) {
+                    $clienteId = $wooCustomerId;
+                } elseif ($resolvedGuestClienteId !== null && $resolvedGuestClienteId > 0) {
+                    $clienteId = $resolvedGuestClienteId;
+                } else {
                     $skippedNoCliente++;
                     continue;
                 }
 
-                $clienteId = $wooCustomerId;
+                [$billingDirectionId, $shippingDirectionId] = $this->resolveOrderDirectionIds(
+                    $wcOrder,
+                    $direccionesByWooCustomerId[$clienteId] ?? []
+                );
 
                 $pedidoAttrs = $this->mapPedido($wcOrder);
                 $pedidoAttrs['woocommerce_id'] = $wooOrderId;
                 $pedidoAttrs['woocommerce_customer_id'] = $wooCustomerId;
                 $pedidoAttrs['cliente_id'] = $clienteId;
+                $pedidoAttrs['direccion_1_id'] = $billingDirectionId;
+                $pedidoAttrs['direccion_2_id'] = $shippingDirectionId;
 
                 $pedidoAttrs['sync_status'] = 'pending';
                 $pedidoAttrs['last_error'] = null;
@@ -197,6 +220,7 @@ class ProdImportPedidos extends Command
             }
 
             $this->info("Mapeados pedidos: {$mappedPedidos} | líneas: {$mappedLineas} | skip sin order_id: {$skippedNoWooOrderId} | skip sin cliente: {$skippedNoCliente}");
+            $this->writeDailyEntityLog("MAP page={$page} pedidos={$mappedPedidos} lineas={$mappedLineas} skip_no_order_id={$skippedNoWooOrderId} skip_no_cliente={$skippedNoCliente}");
             Log::info($marker . ' mapped', [
                 'mapped_pedidos' => $mappedPedidos,
                 'mapped_lineas' => $mappedLineas,
@@ -214,6 +238,7 @@ class ProdImportPedidos extends Command
             $pedidoRows = collect($pedidoRows)->keyBy('woocommerce_id')->values()->all();
             $afterPedidos = count($pedidoRows);
             if ($afterPedidos !== $beforePedidos) {
+                $this->writeDailyEntityLog("DEDUP_PEDIDOS before={$beforePedidos} after={$afterPedidos}");
                 $this->warn("Dedup pedidos: {$beforePedidos} -> {$afterPedidos}");
                 Log::warning($marker . ' dedup pedidos', ['before' => $beforePedidos, 'after' => $afterPedidos]);
             }
@@ -290,6 +315,7 @@ class ProdImportPedidos extends Command
             }
 
             $this->info("Pedidos -> Insert: {$insertPedidos} | Update: {$updatePedidos} | Skip: {$skipPedidos} | Requeued: {$requeuedPedidos}");
+            $this->writeDailyEntityLog("DIFF_PEDIDOS insert={$insertPedidos} update={$updatePedidos} skip={$skipPedidos} requeued={$requeuedPedidos}");
             Log::info($marker . ' pedidos diff', compact('insertPedidos','updatePedidos','skipPedidos','requeuedPedidos'));
 
             if (!empty($toUpsertPedidos)) {
@@ -310,10 +336,12 @@ class ProdImportPedidos extends Command
                             Pedidos::upsert($chunk, ['woocommerce_id'], $updateColumns);
                         });
                     } catch (QueryException $e) {
+                        $this->writeDailyEntityLog("UPSERT_PEDIDOS_ERROR chunk={$chunkNum} message=" . $e->getMessage());
                         $this->error("Pedidos chunk {$chunkNum} petó: " . $e->getMessage());
                         Log::error($marker . ' pedidos chunk failed', ['chunk' => $chunkNum, 'message' => $e->getMessage(), 'sql' => $e->getSql()]);
                         return self::FAILURE;
                     } catch (Throwable $e) {
+                        $this->writeDailyEntityLog("UPSERT_PEDIDOS_ERROR chunk={$chunkNum} message=" . $e->getMessage());
                         $this->error("Pedidos chunk {$chunkNum} petó: " . $e->getMessage());
                         Log::error($marker . ' pedidos chunk failed (throwable)', ['chunk' => $chunkNum, 'message' => $e->getMessage()]);
                         return self::FAILURE;
@@ -348,6 +376,7 @@ class ProdImportPedidos extends Command
             }
 
             if ($skippedLineasNoPedido > 0) {
+                $this->writeDailyEntityLog("LINEAS_SKIP_NO_PEDIDO count={$skippedLineasNoPedido}");
                 $this->warn("Líneas skip sin pedido_id: {$skippedLineasNoPedido}");
                 Log::warning($marker . ' lineas skipped no pedido', ['count' => $skippedLineasNoPedido]);
             }
@@ -387,6 +416,7 @@ class ProdImportPedidos extends Command
                 }
 
                 $this->info("Líneas -> Insert: {$insertLineas} | Update: {$updateLineas} | Skip: {$skipLineas}");
+                $this->writeDailyEntityLog("DIFF_LINEAS insert={$insertLineas} update={$updateLineas} skip={$skipLineas}");
                 Log::info($marker . ' lineas diff', compact('insertLineas','updateLineas','skipLineas'));
 
                 if (!empty($toUpsertLineas)) {
@@ -407,10 +437,12 @@ class ProdImportPedidos extends Command
                                 PedidoLineas::upsert($chunk, ['woocommerce_order_id', 'woocommerce_line_item_id'], $updateColumns);
                             });
                         } catch (QueryException $e) {
+                            $this->writeDailyEntityLog("UPSERT_LINEAS_ERROR chunk={$chunkNum} message=" . $e->getMessage());
                             $this->error("Líneas chunk {$chunkNum} petó: " . $e->getMessage());
                             Log::error($marker . ' lineas chunk failed', ['chunk' => $chunkNum, 'message' => $e->getMessage(), 'sql' => $e->getSql()]);
                             return self::FAILURE;
                         } catch (Throwable $e) {
+                            $this->writeDailyEntityLog("UPSERT_LINEAS_ERROR chunk={$chunkNum} message=" . $e->getMessage());
                             $this->error("Líneas chunk {$chunkNum} petó: " . $e->getMessage());
                             Log::error($marker . ' lineas chunk failed (throwable)', ['chunk' => $chunkNum, 'message' => $e->getMessage()]);
                             return self::FAILURE;
@@ -432,6 +464,7 @@ class ProdImportPedidos extends Command
             $pagesDone++;
         }
 
+        $this->writeDailyEntityLog("SUCCESS written_pedidos={$totalPedidosWritten} written_lineas={$totalLineasWritten}");
         $this->info("OK: import completado (pedidos escritos={$totalPedidosWritten}, líneas escritas={$totalLineasWritten}).");
         Log::info($marker . ' success', ['written_pedidos' => $totalPedidosWritten, 'written_lineas' => $totalLineasWritten]);
 
@@ -547,6 +580,210 @@ class ProdImportPedidos extends Command
         }
 
         return $attrs;
+    }
+
+    /**
+     * Resuelve pedidos de invitado por billing.email contra clientes locales.
+     *
+     * @param array<int, array<string,mixed>> $orders
+     * @return array<int, int>
+     */
+    private function resolveGuestClientIdsByOrderId(array $orders): array
+    {
+        $guestEmailsByOrderId = [];
+        foreach ($orders as $wcOrder) {
+            if (!is_array($wcOrder)) continue;
+
+            $wooOrderId = (int) ($wcOrder['id'] ?? 0);
+            $wooCustomerId = (int) ($wcOrder['customer_id'] ?? 0);
+            if ($wooOrderId <= 0 || $wooCustomerId > 0) {
+                continue;
+            }
+
+            $billing = $wcOrder['billing'] ?? null;
+            $email = is_array($billing) ? $this->normalizeEmail($billing['email'] ?? null) : '';
+            if ($email === '') continue;
+
+            $guestEmailsByOrderId[$wooOrderId] = $email;
+        }
+
+        if (empty($guestEmailsByOrderId)) {
+            return [];
+        }
+
+        $emailGroups = Cliente::query()
+            ->select(['woocommerce_id', 'email'])
+            ->whereNotNull('email')
+            ->where('email', '<>', '')
+            ->whereIn(DB::raw('LOWER(email)'), array_values(array_unique($guestEmailsByOrderId)))
+            ->get()
+            ->groupBy(fn ($cliente) => $this->normalizeEmail($cliente->email));
+
+        $resolved = [];
+        foreach ($guestEmailsByOrderId as $wooOrderId => $email) {
+            $matches = $emailGroups->get($email);
+            if ($matches === null || $matches->isEmpty()) {
+                continue;
+            }
+
+            $distinctWooIds = $matches
+                ->pluck('woocommerce_id')
+                ->filter(fn ($id) => (int) $id > 0)
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values();
+
+            if ($distinctWooIds->count() !== 1) {
+                continue;
+            }
+
+            $resolved[$wooOrderId] = (int) $distinctWooIds->first();
+        }
+
+        return $resolved;
+    }
+
+    /**
+     * @param array<int, int> $wooCustomerIds
+     * @return array<int, array<int, array<string, mixed>>>
+     */
+    private function loadDirectionsByWooCustomerId(array $wooCustomerIds): array
+    {
+        $wooCustomerIds = array_values(array_unique(array_filter(array_map('intval', $wooCustomerIds), fn ($v) => $v > 0)));
+        if (empty($wooCustomerIds)) {
+            return [];
+        }
+
+        $grouped = [];
+        $rows = Direcciones::query()
+            ->whereIn('woocommerce_customer_id', $wooCustomerIds)
+            ->get([
+                'id',
+                'woocommerce_customer_id',
+                'tipo',
+                'first_name',
+                'last_name',
+                'company',
+                'address_1',
+                'address_2',
+                'city',
+                'postcode',
+                'state',
+                'country',
+                'email',
+                'phone',
+            ]);
+
+        foreach ($rows as $row) {
+            $wooCustomerId = (int) ($row->woocommerce_customer_id ?? 0);
+            if ($wooCustomerId <= 0) continue;
+
+            $grouped[$wooCustomerId][] = $row->toArray();
+        }
+
+        return $grouped;
+    }
+
+    /**
+     * @param array<string,mixed> $wcOrder
+     * @param array<int, array<string,mixed>> $direcciones
+     * @return array{0:?int,1:?int}
+     */
+    private function resolveOrderDirectionIds(array $wcOrder, array $direcciones): array
+    {
+        return [
+            $this->matchOrderDirectionId($wcOrder, $direcciones, 'billing'),
+            $this->matchOrderDirectionId($wcOrder, $direcciones, 'shipping'),
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $wcOrder
+     * @param array<int, array<string,mixed>> $direcciones
+     */
+    private function matchOrderDirectionId(array $wcOrder, array $direcciones, string $tipo): ?int
+    {
+        if (empty($direcciones)) return null;
+
+        $addr = $wcOrder[$tipo] ?? null;
+        if (!is_array($addr)) {
+            $addr = [];
+        }
+
+        $expected = $this->normalizeOrderAddress($addr, $tipo, $wcOrder);
+        $bestId = null;
+        $bestScore = PHP_INT_MIN;
+        $fallbackId = null;
+
+        foreach ($direcciones as $dir) {
+            $dirTipo = (string) ($dir['tipo'] ?? '');
+            if ($dirTipo === $tipo && $fallbackId === null) {
+                $fallbackId = (int) ($dir['id'] ?? 0) ?: null;
+            }
+
+            $score = $dirTipo === $tipo ? 1000 : 0;
+            foreach ($expected as $field => $value) {
+                if ($value === '') continue;
+
+                $actual = $this->normalizeAddressValue($dir[$field] ?? null);
+                if ($actual === $value) {
+                    $score += 10;
+                }
+            }
+
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $bestId = (int) ($dir['id'] ?? 0) ?: null;
+            }
+        }
+
+        return $bestId ?? $fallbackId;
+    }
+
+    /**
+     * @param array<string,mixed> $addr
+     * @param array<string,mixed> $wcOrder
+     * @return array<string, string>
+     */
+    private function normalizeOrderAddress(array $addr, string $tipo, array $wcOrder): array
+    {
+        $email = $addr['email'] ?? null;
+        if ($tipo === 'shipping' && ($email === null || trim((string) $email) === '')) {
+            $billing = $wcOrder['billing'] ?? null;
+            $email = is_array($billing) ? ($billing['email'] ?? null) : null;
+        }
+
+        $phone = $addr['phone'] ?? null;
+        if ($tipo === 'shipping' && ($phone === null || trim((string) $phone) === '')) {
+            $billing = $wcOrder['billing'] ?? null;
+            $phone = is_array($billing) ? ($billing['phone'] ?? null) : null;
+        }
+
+        return [
+            'first_name' => $this->normalizeAddressValue($addr['first_name'] ?? null),
+            'last_name' => $this->normalizeAddressValue($addr['last_name'] ?? null),
+            'company' => $this->normalizeAddressValue($addr['company'] ?? null),
+            'address_1' => $this->normalizeAddressValue($addr['address_1'] ?? null),
+            'address_2' => $this->normalizeAddressValue($addr['address_2'] ?? null),
+            'city' => $this->normalizeAddressValue($addr['city'] ?? null),
+            'postcode' => $this->normalizeAddressValue($addr['postcode'] ?? null),
+            'state' => $this->normalizeAddressValue($addr['state'] ?? null),
+            'country' => $this->normalizeAddressValue($addr['country'] ?? null),
+            'email' => $this->normalizeAddressValue($email),
+            'phone' => $this->normalizeAddressValue($phone),
+        ];
+    }
+
+    private function normalizeAddressValue(mixed $value): string
+    {
+        if ($value === null) return '';
+
+        return mb_strtolower(trim((string) $value));
+    }
+
+    private function normalizeEmail(mixed $value): string
+    {
+        return $this->normalizeAddressValue($value);
     }
 
     /**
@@ -686,5 +923,10 @@ class ProdImportPedidos extends Command
         }
 
         return (string) $value;
+    }
+
+    public function __destruct()
+    {
+        $this->closeDailyEntityLog();
     }
 }
