@@ -271,10 +271,10 @@ class ProdSyncPedidos extends Command
 
         $divisa = (string) ($pedido->currency ?? 'EUR');
 
-        $formaPago = trim((string) ($pedido->payment_method_title ?? ''));
-        if ($formaPago !== '') {
-            $formaPago = mb_substr($formaPago, 0, 14);
-        }
+        $formaPago = $this->resolveFormaPago(
+            (string) ($pedido->payment_method ?? ''),
+            (string) ($pedido->payment_method_title ?? '')
+        );
 
         $cobrado = '1';
 
@@ -441,6 +441,40 @@ class ProdSyncPedidos extends Command
         }
 
         return $value;
+    }
+
+    private function resolveFormaPago(string $paymentMethod, string $paymentMethodTitle): string
+    {
+        $haystack = mb_strtolower(trim($paymentMethod . ' ' . $paymentMethodTitle));
+
+        foreach ([
+            'redsys',
+            'tarjeta',
+            'targeta',
+            'card',
+            'stripe',
+            'credit card',
+            'debit card',
+        ] as $needle) {
+            if (str_contains($haystack, $needle)) {
+                return 'TARGETA';
+            }
+        }
+
+        foreach ([
+            'transfer',
+            'transferencia',
+            'bacs',
+            'bank',
+            'wire',
+            'sepa',
+        ] as $needle) {
+            if (str_contains($haystack, $needle)) {
+                return 'TRANSFERENCIA';
+            }
+        }
+
+        return 'PENDIENTE';
     }
 
     private function mockTenClienteId(int $woocommerceId): string
