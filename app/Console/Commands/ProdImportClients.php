@@ -556,35 +556,23 @@ class ProdImportClients extends Command
 
         foreach ($scopeIds as $wcCustomerId) {
             try {
-                $orders = $client->getPedidos(1, 1, [
-                    'customer' => $wcCustomerId,
-                    'orderby' => 'date',
-                    'order' => 'asc',
-                    'status' => 'any',
-                ]);
-
-                if (empty($orders) || !is_array($orders[0])) {
-                    $notFound++;
-                    continue;
-                }
-
-                $order = $orders[0];
-                $meta = $order['meta_data'] ?? null;
-                if (!is_array($meta)) {
-                    $notFound++;
-                    continue;
-                }
-
                 $nifValue = null;
-                foreach ($meta as $m) {
-                    if (!is_array($m)) continue;
-                    $key = $m['key'] ?? null;
-                    if ($key === '_billing_wooccm9' || $key === 'billing_wooccm9') {
-                        $val = $m['value'] ?? null;
-                        if (is_string($val) && trim($val) !== '') {
-                            $nifValue = trim($val);
-                        }
-                        break;
+
+                $wcCustomer = $client->getClienteById($wcCustomerId);
+                if (is_array($wcCustomer)) {
+                    $nifValue = WooCustomerMapper::extractNif($wcCustomer);
+                }
+
+                if ($nifValue === null) {
+                    $orders = $client->getPedidos(1, 1, [
+                        'customer' => $wcCustomerId,
+                        'orderby' => 'date',
+                        'order' => 'asc',
+                        'status' => 'any',
+                    ]);
+
+                    if (!empty($orders) && is_array($orders[0])) {
+                        $nifValue = WooCustomerMapper::extractNif($orders[0]);
                     }
                 }
 

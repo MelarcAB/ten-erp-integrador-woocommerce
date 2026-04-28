@@ -1,0 +1,3 @@
+    "query": "SELECT top 10 * FROM tblSeriesNumeracion order by IdNumero desc"
+
+    

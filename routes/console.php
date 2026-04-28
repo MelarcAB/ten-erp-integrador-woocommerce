@@ -16,6 +16,8 @@ $runProdDailySync = function (): void {
         'app:prod-sync-fabricantes',
         'app:prod-sync-productos',
         'app:prod-sync-img',
+        'app:prod-sync-clients',
+        'app:prod-sync-pedidos',
     ];
 
     Log::info($marker . ' start', ['commands' => $commands]);

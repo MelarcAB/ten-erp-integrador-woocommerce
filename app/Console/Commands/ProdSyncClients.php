@@ -27,6 +27,8 @@ class ProdSyncClients extends Command
         {--use-legacy-get : Usa /customers/get en vez de /Customers/Get}
         {--retry-errors : Incluye clientes con sync_status=error}
         {--email= : Procesa solo un cliente por email (pending/error)}
+        {--override-email= : Email alternativo a enviar a TEN para el cliente filtrado por --email}
+        {--force-create : Ignora vinculación por email y omite IdTen para forzar alta del cliente filtrado por --email}
     ';
 
     /**
@@ -49,6 +51,24 @@ class ProdSyncClients extends Command
 
         $dryRun = (bool) $this->option('dry-run');
         $limit = max(1, (int) $this->option('limit'));
+        $emailFilterOpt = $this->option('email');
+        $emailFilter = is_string($emailFilterOpt) && trim($emailFilterOpt) !== '' ? trim($emailFilterOpt) : null;
+        $overrideEmailOpt = $this->option('override-email');
+        $overrideEmail = is_string($overrideEmailOpt) && trim($overrideEmailOpt) !== '' ? trim($overrideEmailOpt) : null;
+        $forceCreate = (bool) $this->option('force-create');
+        $forceCreateTargetEmail = $forceCreate && $emailFilter !== null ? strtolower($emailFilter) : null;
+
+        if (($forceCreate || $overrideEmail !== null) && $emailFilter === null) {
+            $this->error('Usa --email junto con --override-email y/o --force-create.');
+            return self::FAILURE;
+        }
+
+        if ($forceCreate) {
+            $this->info('Modo force-create activo: se omitirá IdTen y se ignorará la vinculación por email para el cliente filtrado.');
+        }
+        if ($overrideEmail !== null) {
+            $this->info('Override email TEN: ' . $overrideEmail);
+        }
 
         // Paso 0: refrescar clientes/direcciones desde Woo a BD local
         $this->info('Refrescando clientes y direcciones desde WooCommerce...');
@@ -110,6 +130,7 @@ class ProdSyncClients extends Command
         if (!$dryRun && !empty($tenByEmail)) {
             $localsToLink = Cliente::query()
                 ->whereNull('ten_id')
+                ->where('sync_status', '<>', 'disabled')
                 ->whereNotNull('email')
                 ->where('email', '<>', '')
                 ->whereIn(DB::raw('LOWER(email)'), array_keys($tenByEmail))
@@ -118,6 +139,9 @@ class ProdSyncClients extends Command
 
             foreach ($localsToLink as $cliente) {
                 $email = strtolower(trim((string)$cliente->email));
+                if ($forceCreateTargetEmail !== null && $email === $forceCreateTargetEmail) {
+                    continue;
+                }
                 $tenRow = $tenByEmail[$email] ?? null;
                 if (!$tenRow) continue;
 
@@ -152,11 +176,12 @@ class ProdSyncClients extends Command
             $statuses[] = 'error';
         }
 
-        $pendingQuery = Cliente::query()
-            ->with('direcciones')
-            ->whereIn('sync_status', $statuses);
+        $pendingQuery = Cliente::query()->with('direcciones');
+        if (!($forceCreate && $emailFilter !== null)) {
+            $pendingQuery->whereIn('sync_status', $statuses);
+        }
 
-        if ($emailFilter = $this->option('email')) {
+        if ($emailFilter !== null) {
             $pendingQuery->where('email', $emailFilter);
         }
 
@@ -184,9 +209,10 @@ class ProdSyncClients extends Command
 
         foreach ($pending as $cliente) {
             $email = strtolower(trim((string) $cliente->email));
+            $isForceCreateClient = $forceCreateTargetEmail !== null && $email === $forceCreateTargetEmail;
 
             // Si ya existe en TEN por email => vincular y marcar synced
-            if ($email !== '' && isset($tenByEmail[$email])) {
+            if (!$isForceCreateClient && $email !== '' && isset($tenByEmail[$email])) {
                 if (!$dryRun) {
                     $cliente->ten_id = (string)($tenByEmail[$email]['Id'] ?? $cliente->ten_id);
                     $cliente->sync_status = 'synced';
@@ -198,7 +224,11 @@ class ProdSyncClients extends Command
                 continue;
             }
 
-            $clientePayload = $this->mapClienteToTenPayload($cliente);
+            $clientePayload = $this->mapClienteToTenPayload(
+                $cliente,
+                $isForceCreateClient ? $overrideEmail : null,
+                $isForceCreateClient
+            );
 
             if ($dryRun) {
                 $this->writeDailyEntityLog('PAYLOAD ' . json_encode($clientePayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
@@ -208,7 +238,30 @@ class ProdSyncClients extends Command
             }
 
             try {
+                $wrappedPayload = ['Customers' => [$clientePayload]];
+                $this->writeDailyEntityLog(
+                    'CUSTOMER_SEND woo_id=' . ($cliente->woocommerce_id ?? $cliente->getKey()) .
+                    ' email=' . (string) $cliente->email .
+                    ' payload=' . json_encode($wrappedPayload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+                );
+                Log::info($marker . ' customer set payload', [
+                    'cliente_woocommerce_id' => $cliente->woocommerce_id ?? $cliente->getKey(),
+                    'email' => $cliente->email,
+                    'payload' => $wrappedPayload,
+                ]);
+
                 $response = $ten->setCustomers([$clientePayload]);
+                $this->writeDailyEntityLog(
+                    'CUSTOMER_RESPONSE woo_id=' . ($cliente->woocommerce_id ?? $cliente->getKey()) .
+                    ' email=' . (string) $cliente->email .
+                    ' response=' . json_encode($response, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+                );
+                Log::info($marker . ' customer set response', [
+                    'cliente_woocommerce_id' => $cliente->woocommerce_id ?? $cliente->getKey(),
+                    'email' => $cliente->email,
+                    'response' => $response,
+                ]);
+
                 $parsed = $this->parseTenSetCustomersResponse($response);
 
                 $hasExceptions = !empty($parsed['exceptions']);
@@ -334,7 +387,7 @@ class ProdSyncClients extends Command
      * @param Cliente $cliente
      * @return array<string,mixed>
      */
-    private function mapClienteToTenPayload(Cliente $cliente): array
+    private function mapClienteToTenPayload(Cliente $cliente, ?string $overrideEmail = null, bool $forceCreate = false): array
     {
         $dirs = [];
         $direcciones = $cliente->direcciones
@@ -348,35 +401,18 @@ class ProdSyncClients extends Command
         foreach ($direcciones as $dir) {
             if (!$dir instanceof Direcciones) continue;
 
-            $dirPayload = [
-                'Codigo' => (string)($dir->getKey()),
-                'Nombre' => (string)($dir->ten_nombre ?? $dir->first_name ?? $cliente->nombre ?? ''),
-                'Apellidos' => (string)($dir->ten_apellidos ?? $dir->last_name ?? $cliente->apellidos ?? ''),
-                'Direccion' => (string)($dir->ten_direccion ?? $dir->address_1 ?? ''),
-                'Direccion2' => (string)($dir->ten_direccion2 ?? $dir->address_2 ?? ''),
-                'CodigoPostal' => (string)($dir->ten_codigo_postal ?? $dir->postcode ?? ''),
-                'Poblacion' => (string)($dir->ten_poblacion ?? $dir->city ?? ''),
-                'Provincia' => (string)($dir->ten_provincia ?? $dir->state ?? ''),
-                'Pais' => (string)($dir->ten_pais ?? $dir->country ?? ''),
-                'Telefono' => (string)($dir->ten_telefono ?? $dir->phone ?? $cliente->telefono ?? ''),
-                'Fax' => (string)($dir->ten_fax ?? ''),
-                'AditionalData' => (object) (is_array($dir->ten_aditional_data) ? $dir->ten_aditional_data : (array)($dir->ten_aditional_data ?? [])),
-            ];
+            $dirPayload = $this->buildDireccionPayload($cliente, $dir);
 
-            if (!empty($dir->ten_id_ten) && (string)$dir->ten_id_ten !== '-1' && (string)$dir->ten_id_ten !== '0') {
+            if (
+                !$forceCreate &&
+                !empty($dir->ten_id_ten) &&
+                (string)$dir->ten_id_ten !== '-1' &&
+                (string)$dir->ten_id_ten !== '0'
+            ) {
                 $dirPayload['IdTen'] = (string) $dir->ten_id_ten;
             }
 
             $dirs[] = $dirPayload;
-        }
-
-        // En creación, TEN necesita una copia de la dirección principal con Codigo=-1
-        // para asociarla al cliente, manteniendo además las direcciones normales.
-        if (!empty($dirs) && empty($cliente->ten_id)) {
-            $principal = $dirs[0];
-            $principal['Codigo'] = '-1';
-            unset($principal['IdTen']);
-            array_unshift($dirs, $principal);
         }
 
         if (empty($dirs)) {
@@ -396,9 +432,20 @@ class ProdSyncClients extends Command
             ];
         }
 
+        $principalPayload = $this->pickPrimaryDireccionPayload($dirs);
+
+        // En creación, TEN necesita una copia de la dirección principal con IdTen=-1.
+        // Seguimos el ejemplo de la API: Codigo normal del cliente y IdTen=-1.
+        if ($forceCreate || empty($cliente->ten_id)) {
+            $principal = $principalPayload;
+            $principal['Codigo'] = (string)($cliente->ten_codigo ?? $cliente->woocommerce_id ?? $cliente->getKey());
+            $principal['IdTen'] = '-1';
+            array_unshift($dirs, $principal);
+        }
+
         $payload = [
             'Codigo' => (string)($cliente->ten_codigo ?? $cliente->woocommerce_id ?? $cliente->getKey()),
-            'Email' => (string)($cliente->email ?? ''),
+            'Email' => (string)($overrideEmail ?? $cliente->email ?? ''),
             'Nombre' => (string)($cliente->nombre ?? ''),
             'Apellidos' => (string)($cliente->apellidos ?? ''),
             'NombreFiscal' => (string)($cliente->nombre_fiscal ?? ''),
@@ -416,15 +463,70 @@ class ProdSyncClients extends Command
             'CalculoIVAFactura' => (string)($cliente->ten_calculo_iva_factura ?? ''),
             'EnviarEmails' => $cliente->ten_enviar_emails ? '1' : '0',
             'ConsentimientoDatos' => $cliente->ten_consentimiento_datos ? '1' : '0',
+            'Direccion' => (string)($principalPayload['Direccion'] ?? ''),
+            'Direccion2' => (string)($principalPayload['Direccion2'] ?? ''),
+            'CodigoPostal' => (string)($principalPayload['CodigoPostal'] ?? ''),
+            'Poblacion' => (string)($principalPayload['Poblacion'] ?? ''),
+            'Provincia' => (string)($principalPayload['Provincia'] ?? ''),
+            'Pais' => (string)($principalPayload['Pais'] ?? ''),
+            'Fax' => (string)($principalPayload['Fax'] ?? ''),
             'AditionalData' => (object) [],
             'Direcciones' => $dirs,
         ];
 
-        if (!empty($cliente->ten_id)) {
+        if (!empty($cliente->ten_id) && !$forceCreate) {
             $payload['IdTen'] = (string) $cliente->ten_id;
         }
 
         return $payload;
+    }
+
+    private function buildDireccionPayload(Cliente $cliente, Direcciones $dir): array
+    {
+        return [
+            'Codigo' => (string)($dir->getKey()),
+            'Nombre' => (string)($dir->ten_nombre ?? $dir->first_name ?? $cliente->nombre ?? ''),
+            'Apellidos' => (string)($dir->ten_apellidos ?? $dir->last_name ?? $cliente->apellidos ?? ''),
+            'Direccion' => (string)($dir->ten_direccion ?? $dir->address_1 ?? ''),
+            'Direccion2' => (string)($dir->ten_direccion2 ?? $dir->address_2 ?? ''),
+            'CodigoPostal' => (string)($dir->ten_codigo_postal ?? $dir->postcode ?? ''),
+            'Poblacion' => (string)($dir->ten_poblacion ?? $dir->city ?? ''),
+            'Provincia' => (string)($dir->ten_provincia ?? $dir->state ?? ''),
+            'Pais' => (string)($dir->ten_pais ?? $dir->country ?? ''),
+            'Telefono' => (string)($dir->ten_telefono ?? $dir->phone ?? $cliente->telefono ?? ''),
+            'Fax' => (string)($dir->ten_fax ?? ''),
+            'AditionalData' => (object) (is_array($dir->ten_aditional_data) ? $dir->ten_aditional_data : (array)($dir->ten_aditional_data ?? [])),
+        ];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $dirs
+     * @return array<string, mixed>
+     */
+    private function pickPrimaryDireccionPayload(array $dirs): array
+    {
+        foreach ($dirs as $dir) {
+            if ($this->direccionPayloadHasAddressData($dir)) {
+                return $dir;
+            }
+        }
+
+        return $dirs[0];
+    }
+
+    /**
+     * @param array<string, mixed> $dir
+     */
+    private function direccionPayloadHasAddressData(array $dir): bool
+    {
+        foreach (['Direccion', 'Direccion2', 'CodigoPostal', 'Poblacion', 'Provincia', 'Pais', 'Telefono'] as $field) {
+            $value = $dir[$field] ?? null;
+            if (is_string($value) && trim($value) !== '') {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

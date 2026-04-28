@@ -4,6 +4,11 @@ namespace App\Integrations\Mappers;
 
 class WooCustomerMapper
 {
+    private const NIF_META_KEYS = [
+        'billing_wooccm9',
+        '_billing_wooccm9',
+    ];
+
     /**
      * WC customer -> columnas de tabla clientes (sin direcciones).
      *
@@ -21,6 +26,7 @@ class WooCustomerMapper
         $last  = $str($wc['last_name'] ?? null)  ?: $str($wc['billing']['last_name'] ?? null);
 
         $phone = $str($wc['billing']['phone'] ?? null);
+        $nif = self::extractNif($wc);
 
         $attrs = [
             // Mapeo WC
@@ -36,7 +42,7 @@ class WooCustomerMapper
             'ten_id' => null,
             'ten_codigo' => null,
             'nombre_fiscal' => null,
-            'nif' => null,
+            'nif' => $nif,
             'ten_id_direccion_envio' => null,
             'ten_id_grupo_clientes' => null,
             'ten_regimen_impuesto' => null,
@@ -62,6 +68,55 @@ class WooCustomerMapper
         }
 
         return $attrs;
+    }
+
+    /**
+     * @param array<string,mixed> $wc
+     */
+    public static function extractNif(array $wc): ?string
+    {
+        $billingNif = $wc['billing']['wooccm9'] ?? $wc['billing']['billing_wooccm9'] ?? null;
+        $normalized = self::normalizeNif($billingNif);
+        if ($normalized !== null) {
+            return $normalized;
+        }
+
+        $metaData = $wc['meta_data'] ?? null;
+        if (!is_array($metaData)) {
+            return null;
+        }
+
+        foreach ($metaData as $meta) {
+            if (!is_array($meta)) continue;
+
+            $key = $meta['key'] ?? null;
+            if (!is_string($key) || !in_array($key, self::NIF_META_KEYS, true)) {
+                continue;
+            }
+
+            return self::normalizeNif($meta['value'] ?? null);
+        }
+
+        return null;
+    }
+
+    public static function normalizeNif(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $normalized = strtoupper(trim((string) $value));
+        if ($normalized === '') {
+            return null;
+        }
+
+        $normalized = preg_replace('/[^A-Z0-9]/', '', $normalized);
+        if (!is_string($normalized) || $normalized === '') {
+            return null;
+        }
+
+        return $normalized;
     }
 
     /**

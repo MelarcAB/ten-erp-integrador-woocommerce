@@ -311,48 +311,45 @@ class TestWCCustomersImport extends Command
 
         foreach ($scopeIds as $wcCustomerId) {
             try {
-                $this->line("Enrich NIF: consultando pedidos para customer={$wcCustomerId}");
-                $orders = $client->getPedidos(1, 1, [
-                    'customer' => $wcCustomerId,
-                    'orderby' => 'date',
-                    'order' => 'asc',
-                    'status' => 'any',
-                ]);
-
-                if (empty($orders) || !is_array($orders[0])) {
-                    $this->warn("Enrich NIF: sin pedidos (o respuesta vacía) para customer={$wcCustomerId}");
-                    $notFound++;
-                    continue;
-                }
-
-                $order = $orders[0];
-                $orderId = $order['id'] ?? null;
-                $this->line("Enrich NIF: primer pedido id=" . json_encode($orderId));
-                $meta = $order['meta_data'] ?? null;
-                if (!is_array($meta)) {
-                    $this->warn("Enrich NIF: pedido sin meta_data (id=" . json_encode($orderId) . ")");
-                    $notFound++;
-                    continue;
-                }
-
-                // Debug keys disponibles
-                $keys = [];
-                foreach ($meta as $m) {
-                    if (is_array($m) && isset($m['key'])) $keys[] = (string) $m['key'];
-                }
-                $this->line('Enrich NIF: meta_data keys=' . implode(',', array_slice($keys, 0, 30)) . (count($keys) > 30 ? '...' : ''));
-
                 $nifValue = null;
-                foreach ($meta as $m) {
-                    if (!is_array($m)) continue;
-                    $key = $m['key'] ?? null;
-                    if ($key === '_billing_wooccm9' || $key === 'billing_wooccm9') {
-                        $val = $m['value'] ?? null;
-                        if (is_string($val) && trim($val) !== '') {
-                            $nifValue = trim($val);
-                        }
-                        break;
+                $this->line("Enrich NIF: consultando ficha customer={$wcCustomerId}");
+                $wcCustomer = $client->getClienteById($wcCustomerId);
+                if (is_array($wcCustomer)) {
+                    $nifValue = WooCustomerMapper::extractNif($wcCustomer);
+                    $keys = collect($wcCustomer['meta_data'] ?? [])
+                        ->map(fn ($m) => is_array($m) ? ($m['key'] ?? null) : null)
+                        ->filter()
+                        ->values()
+                        ->all();
+                    $this->line('Enrich NIF: customer meta_data keys=' . implode(',', array_slice($keys, 0, 30)) . (count($keys) > 30 ? '...' : ''));
+                }
+
+                if ($nifValue === null) {
+                    $this->line("Enrich NIF: consultando pedidos para customer={$wcCustomerId}");
+                    $orders = $client->getPedidos(1, 1, [
+                        'customer' => $wcCustomerId,
+                        'orderby' => 'date',
+                        'order' => 'asc',
+                        'status' => 'any',
+                    ]);
+
+                    if (empty($orders) || !is_array($orders[0])) {
+                        $this->warn("Enrich NIF: sin pedidos (o respuesta vacía) para customer={$wcCustomerId}");
+                        $notFound++;
+                        continue;
                     }
+
+                    $order = $orders[0];
+                    $orderId = $order['id'] ?? null;
+                    $this->line("Enrich NIF: primer pedido id=" . json_encode($orderId));
+                    $keys = collect($order['meta_data'] ?? [])
+                        ->map(fn ($m) => is_array($m) ? ($m['key'] ?? null) : null)
+                        ->filter()
+                        ->values()
+                        ->all();
+                    $this->line('Enrich NIF: order meta_data keys=' . implode(',', array_slice($keys, 0, 30)) . (count($keys) > 30 ? '...' : ''));
+
+                    $nifValue = WooCustomerMapper::extractNif($order);
                 }
 
                 if ($nifValue === null) {
