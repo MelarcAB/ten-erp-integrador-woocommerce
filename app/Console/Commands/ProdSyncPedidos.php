@@ -293,7 +293,8 @@ class ProdSyncPedidos extends Command
         $fechaEntrega = $pedido->wc_date_completed ? $pedido->wc_date_completed->format('Y-m-d H:i:s') : $fecha;
 
         $importe = (string) ($pedido->total ?? '0');
-        $importePortes = (string) ($pedido->shipping_total ?? '0');
+        // El envío se manda como línea de producto; no duplicarlo como portes de cabecera.
+        $importePortes = '0';
         $importeDivisa = $importe;
         $importePVP = $importe;
 
