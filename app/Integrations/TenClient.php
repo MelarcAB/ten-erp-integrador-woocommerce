@@ -15,7 +15,7 @@ class TenClient
     public function __construct(?string $baseUrl = null)
     {
         // Puedes moverlo a config/services.php si quieres.
-        $this->baseUrl = rtrim($baseUrl ?? config('services.ten.base_url', 'http://81.42.251.21:2223'), '/');
+        $this->baseUrl = rtrim($baseUrl ?? config('services.ten.base_url', 'http://81.42.251.21:2222'), '/');
     }
 
     protected function http(): PendingRequest
@@ -41,7 +41,7 @@ class TenClient
      */
     public function getProducts(?Carbon $modifiedAfter = null, int $items = 100000, int $page = 0): array
     {
-        $modifiedAfter ??= now()->subWeeks(2);
+        $modifiedAfter ??= now()->subMonth();
 
         // Formato esperado por TEN: "YYYY-MM-DD HH:MM:SS"
         $modifiedAfterStr = $modifiedAfter->format('Y-m-d H:i:s');
