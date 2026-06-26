@@ -30,6 +30,7 @@ class ProdSyncPedidos extends Command
         {--dry-run : No llama a TEN ni escribe en BD}
         {--order-id= : Procesa solo un pedido por woocommerce_id}
         {--only-pending : Solo procesa sync_status=pending (por defecto también error)}
+        {--wc-status=processing,completed : Estados Woo permitidos, separados por coma}
         {--serie-id= : Fuerza IdSerie en el payload enviado a TEN}
         {--force-resend : Permite reenviar un pedido aunque ya tenga ten_id}
     ';
@@ -53,6 +54,7 @@ class ProdSyncPedidos extends Command
         $limit = max(1, (int) $this->option('limit'));
         $dryRun = (bool) $this->option('dry-run');
         $onlyPending = (bool) $this->option('only-pending');
+        $allowedWooStatuses = $this->parseCsvOption((string) $this->option('wc-status'));
         $serieIdOpt = $this->option('serie-id');
         $serieId = is_string($serieIdOpt) && trim($serieIdOpt) !== '' ? trim($serieIdOpt) : null;
         $forceResend = (bool) $this->option('force-resend');
@@ -87,6 +89,7 @@ class ProdSyncPedidos extends Command
         $query = Pedidos::query()
             ->with(['lineas'])
             ->whereIn('sync_status', $statuses)
+            ->whereIn('status', $allowedWooStatuses)
             ->orderBy('woocommerce_id')
             ->limit($limit);
 
@@ -100,8 +103,10 @@ class ProdSyncPedidos extends Command
 
         $this->syncLogHandle = $this->openSyncLog();
         $this->writeSyncLog('START sync');
+        $this->writeSyncLog('FILTER wc_status=' . implode(',', $allowedWooStatuses));
 
         $pedidos = $query->get();
+        $this->info('Filtro estados Woo: ' . implode(', ', $allowedWooStatuses));
         $this->info('Pedidos a procesar: ' . $pedidos->count());
 
         if ($pedidos->isEmpty()) {
@@ -256,6 +261,16 @@ class ProdSyncPedidos extends Command
         if (!is_resource($this->syncLogHandle)) return;
         $ts = now()->format('Y-m-d H:i:s');
         @fwrite($this->syncLogHandle, '[' . $ts . '] ' . $line . PHP_EOL);
+    }
+
+    private function parseCsvOption(string $value): array
+    {
+        $items = array_values(array_filter(array_map(
+            static fn (string $item) => trim($item),
+            explode(',', $value)
+        ), static fn (string $item) => $item !== ''));
+
+        return $items !== [] ? $items : ['processing', 'completed'];
     }
     /**
      * Map DB -> payload TEN /Orders/Set (solo creación).
